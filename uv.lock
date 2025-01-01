@@ -182,7 +182,7 @@ wheels = [
 ]
 
 [[package]]
-name = "ludicolo"
+name = "lotad"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

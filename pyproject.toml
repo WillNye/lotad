@@ -1,5 +1,5 @@
 [project]
-name = "ludicolo"
+name = "lotad"
 version = "0.0.1"
 description = "Lotad helps you identify schema changes, data differences, and structural modifications between database versions."
 readme = "README.md"
