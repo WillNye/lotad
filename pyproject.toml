@@ -9,4 +9,5 @@ dependencies = [
     "numpy>=2.2.1",
     "pandas>=2.2.3",
     "swifter>=1.4.0",
+    "xxhash>=3.5.0",
 ]

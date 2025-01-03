@@ -102,7 +102,7 @@ class DriftAnalysis:
             'id': diff_df['row_hash'],
             'observed_in': observed_in,
             'table_name': table,
-            'content': diff_df.apply(lambda row: json.dumps({k: v for k, v in row.items()}, indent=2), axis=1)
+            'content': diff_df.apply(lambda row: json.dumps({k: str(v) for k, v in row.items()}, indent=2), axis=1)
         })
         self.db_conn.execute(f"""
             INSERT INTO {table_name}

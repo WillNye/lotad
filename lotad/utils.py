@@ -38,7 +38,7 @@ def maybe_load_dict(val: str) -> Union[str, dict]:
             return val
 
 
-def get_row_hash(row: Any) -> Union[str, tuple]:
+def get_row_hash(row: Any) -> str:
     """Generates a consistent hash for row-level data comparison.
 
     This function creates a deterministic hash representation of row data,
@@ -86,10 +86,12 @@ def get_row_hash(row: Any) -> Union[str, tuple]:
             json.dumps(sorted(normalized_dict.items())).encode()
         ).hexdigest()
     elif isinstance(row, list):
-        return tuple(
-            sorted(
-                get_row_hash(_item) for _item in row
+        return xxhash.xxh64(
+            json.dumps(
+                sorted(
+                    get_row_hash(_item) for _item in row
+                )
             )
-        )
+        ).hexdigest()
     else:
         return str(row)

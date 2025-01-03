@@ -20,7 +20,7 @@ pip install lotad
 ## Quick Start
 
 ```python
-from lotad import DatabaseComparator
+from lotad.db_compare import DatabaseComparator
 
 # Initialize comparator with database paths
 comparator = DatabaseComparator('path/to/db1.db', 'path/to/db2.db')
@@ -37,6 +37,11 @@ comparator.generate_comparison_report(results, 'comparison_report.txt')
 Compare specific tables while ignoring others:
 
 ```python
+from lotad.db_compare import DatabaseComparator
+
+# Initialize comparator with database paths
+comparator = DatabaseComparator('path/to/db1.db', 'path/to/db2.db')
+
 # Compare only specified tables
 results = comparator.compare_all(tables=['users', 'orders'])
 
@@ -47,20 +52,22 @@ results = comparator.compare_all(ignore_tables=['logs', 'temp_data'])
 Access detailed comparison results:
 
 ```python
+from lotad.db_compare import DatabaseComparator
+
+# Initialize comparator with database paths
+comparator = DatabaseComparator('path/to/db1.db', 'path/to/db2.db')
+
 # Get schema differences
-schema_diff = comparator.compare_table_schemas('users')
+schema_diff = comparator.compare_table_schemas(['users'])
 print(f"Missing columns in DB2: {schema_diff['missing_in_db2']}")
 print(f"Type mismatches: {schema_diff['type_mismatches']}")
 
 # Compare table data
-data_diff = comparator.compare_table_data('orders')
+data_diff = comparator.compare_table_data(['orders'])
 print(f"Row count difference: {data_diff['row_count_diff']}")
+```
+
 
 ## License
 
 This project is licensed under the MIT License.
-
-## Why Lotad?
-
-Named after the water lily Pokémon, Lotad helps you stay afloat in a sea of database changes by tracking data drift between your DuckDB instances.
-```

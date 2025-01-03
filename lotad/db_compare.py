@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -144,14 +145,14 @@ class DatabaseComparator:
     def compare_all(
         self,
         ignore_tables: Optional[list[str]] = None,
-        tables: Optional[list[str]] = None,
+        target_tables: Optional[list[str]] = None,
 
     ) -> dict:
         """Performs a comprehensive comparison of all tables between the 2 dbs.
 
         Args:
             ignore_tables (Optional[list[str]]): List of table names to exclude from comparison.
-            tables (Optional[list[str]]): List of specific tables to compare. If provided,
+            target_tables (Optional[list[str]]): List of specific tables to compare. If provided,
                                         only these tables will be compared.
 
         Returns:
@@ -176,10 +177,12 @@ class DatabaseComparator:
 
         for table in sorted(tables1 & tables2):
             table_name = table.lower()
-            if ignore_tables and table_name in ignore_tables:
+            if ignore_tables and any(re.match(it, table_name, re.IGNORECASE) for it in ignore_tables):
+                logger.info(f"{table} is an ignored table, skipping.")
                 continue
 
-            if tables and table.lower() not in tables:
+            if target_tables and any(re.match(tt, table_name, re.IGNORECASE) for tt in target_tables):
+                logger.info(f"{table} is not a target table, skipping.")
                 continue
             logger.info(f"Comparing table {table}")
             self.compare_table_data(table)
