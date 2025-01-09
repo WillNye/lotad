@@ -16,7 +16,7 @@ class LotadConnectionInterface:
         # There isn't a db connection attr because this needs to work in a proc pool
         #   And connection objects like the DuckDBPyConnection class cannot be pickled
 
-        self.connection_str = connection_string
+        self.connection_str = os.path.expanduser(connection_string)
         self._queries_dir = os.path.join(os.path.dirname(__file__), 'queries')
 
     def get_connection(self, read_only: bool = True):
@@ -87,4 +87,3 @@ class DuckDbConnectionInterface(LotadConnectionInterface):
         assert db_response.description
         column_names = [desc[0] for desc in db_response.description]
         return [dict(zip(column_names, row)) for row in rows]
-

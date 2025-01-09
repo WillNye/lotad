@@ -22,8 +22,8 @@ class ConfigWizard:
 
     def __init__(self, config: Config):
         self.config = config
-        self.db1_path = str(config.db1_connection_string)
-        self.db2_path = str(config.db2_connection_string)
+        self.db1_path = config.db1_connection_string
+        self.db2_path = config.db2_connection_string
 
     def get_table_ignore_columns(self, table_name: str) -> IgnoreColumnSuggestions:
         """Returns all columns with no matching values between the 2 dbs
@@ -305,4 +305,3 @@ class ConfigWizard:
 
             except (KeyboardInterrupt, TypeError):
                 sys.exit(0)
-

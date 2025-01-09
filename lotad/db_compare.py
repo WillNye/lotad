@@ -24,8 +24,8 @@ class DatabaseComparator:
 
     def __init__(self, config: Config):
         self.config = config
-        self.db1_path = str(config.db1_connection_string)
-        self.db2_path = str(config.db2_connection_string)
+        self.db1_path = config.db1.connection_str
+        self.db2_path = config.db2.connection_str
 
         self.drift_analysis = DriftAnalysis(self.config)
 
@@ -236,10 +236,10 @@ def compare_table_data(config: Config, table_name: str) -> Union[TableDataDiff, 
     tmp_db_interface: LotadConnectionInterface = LotadConnectionInterface.create(tmp_path)
     tmp_db = tmp_db_interface.get_connection(read_only=False)
 
-    db1_path = config.db1_connection_string
+    db1_path = config.db1.connection_str
     db1 = config.db1.get_connection(read_only=True)
 
-    db2_path = config.db2_connection_string
+    db2_path = config.db2.connection_str
     db2 = config.db2.get_connection(read_only=True)
 
     # Attach the dbs to the tmp db so they can be used in queries

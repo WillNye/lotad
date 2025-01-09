@@ -54,11 +54,12 @@ class DriftAnalysis:
 
     def __init__(self, config: Config):
         self.config = config
+        output_path = os.path.expanduser(config.output_path)
 
-        if os.path.exists(config.output_path):
-            os.remove(config.output_path)
+        if os.path.exists(output_path):
+            os.remove(output_path)
 
-        self.db_interface = LotadConnectionInterface.create(config.output_path)
+        self.db_interface = LotadConnectionInterface.create(output_path)
         self.db_conn = self.db_interface.get_connection(read_only=False)
         self._add_tables()
 
@@ -164,8 +165,8 @@ class DriftAnalysis:
             self.db_conn.execute(
                 query.render(
                     table_name=table_name,
-                    db1=self.config.db1_connection_string,
-                    db2=self.config.db2_connection_string,
+                    db1=self.config.db1.connection_str,
+                    db2=self.config.db2.connection_str,
                     data_drift_summary_table=DriftAnalysisTables.DB_DATA_DRIFT_SUMMARY.value,
 
                 )
