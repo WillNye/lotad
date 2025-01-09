@@ -5,6 +5,8 @@ from typing import Union
 
 import yaml
 
+from lotad.connection import LotadConnectionInterface
+
 CPU_COUNT = max(os.cpu_count() - 2, 2)
 
 
@@ -52,7 +54,10 @@ class TableRules:
     def dict(self):
         return {
             'table_name': self.table_name,
-            'rules': [rule.dict() for rule in self.rules],
+            'rules': sorted(
+                [rule.dict() for rule in self.rules],
+                key=lambda x: f"{x['rule_type']}:{x['rule_value']}"
+            ),
         }
 
     def get_rule(self, rule_value: str) -> Union[TableRule, None]:
@@ -63,16 +68,25 @@ class TableRules:
 class Config:
     path: str
 
-    ignore_dates: bool
-
     db1_connection_string: str
     db2_connection_string: str
+
+    output_path: str = 'drift_analysis.db'
 
     target_tables: list[str] = None
     ignore_tables: list[str] = None
 
     table_rules: list[TableRules] = None
+
+    ignore_dates: bool = False
+
     _table_rules_map: dict[str, TableRules] = None
+
+    _db1: LotadConnectionInterface = None
+    _db2: LotadConnectionInterface = None
+
+    # Any attr that starts with an underscore is not versioned by default
+    _unversioned_config_attrs = ["path"]
 
     @classmethod
     def load(cls, path):
@@ -80,7 +94,18 @@ class Config:
             config_dict = yaml.safe_load(f)
             return Config(path=path, **config_dict)
 
+    @property
+    def db1(self):
+        return self._db1
+
+    @property
+    def db2(self):
+        return self._db2
+
     def __post_init__(self):
+        self._db1 = LotadConnectionInterface.create(self.db1_connection_string)
+        self._db2 = LotadConnectionInterface.create(self.db2_connection_string)
+
         if self.table_rules:
             for i, table_rule in enumerate(self.table_rules):
                 if isinstance(table_rule, dict):
@@ -94,12 +119,25 @@ class Config:
             self._table_rules_map = {}
 
     def dict(self):
-        response = asdict(self)
-        del response['path']
-        del response['_table_rules_map']
-        response['table_rules'] = [tr.dict() for tr in self.table_rules]
+        response = {
+            k: v
+            for k, v in asdict(self).items()
+            if v and not (k in self._unversioned_config_attrs or k.startswith('_'))
+        }
 
-        return {k: v for k, v in response.items() if v}
+        if "target_tables" in response:
+            response["target_tables"] = sorted(response["target_tables"])
+
+        if "ignore_tables" in response:
+            response["ignore_tables"] = sorted(response["ignore_tables"])
+
+        if "table_rules" in response:
+            response['table_rules'] = sorted(
+                [tr.dict() for tr in self.table_rules],
+                key=lambda x: x['table_name']
+            )
+
+        return response
 
     def write(self):
         config_dict = self.dict()
