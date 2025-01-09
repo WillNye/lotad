@@ -10,10 +10,6 @@ import structlog
 def pretty_log(logger, method_name, event_dict):
     return_dict = {}
 
-    # Uncomment this if we want to default to single line logging. Can get hard to read with long resources though.
-    # if not any(bool(isinstance(value, dict) or isinstance(value, list)) for value in event_dict.values()):
-    #     return event_dict
-
     for key, value in event_dict.items():
         if key != "event":
             key = f"\n  {key}"

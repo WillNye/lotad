@@ -1,52 +1,75 @@
+import functools
+import os
+
 import duckdb
+from jinja2 import Template
 
 from lotad.logger import logger
 from lotad.utils import get_row_hash
 
 
 class LotadConnectionInterface:
+    connection_str: str
+    _queries_sub_dir: str
 
-    @staticmethod
-    def get_connection(db_conn_str: str, read_only: bool = True):
+    def __init__(self, connection_string: str):
+        # There isn't a db connection attr because this needs to work in a proc pool
+        #   And connection objects like the DuckDBPyConnection class cannot be pickled
+
+        self.connection_str = connection_string
+        self._queries_dir = os.path.join(os.path.dirname(__file__), 'queries')
+
+    def get_connection(self, read_only: bool = True):
+        # Create with self.connection_str
+        raise NotImplementedError
+
+    def get_schema(self, db_conn, table_name: str, ignore_dates: bool) -> dict:
         raise NotImplementedError
 
     @staticmethod
-    def get_schema(db_conn, table_name: str):
+    def parse_db_response(db_response) -> list[dict]:
         raise NotImplementedError
 
     @staticmethod
-    def get_tables(db_conn):
+    def get_tables(db_conn) -> list:
         raise NotImplementedError
 
     @classmethod
-    def create_connection(cls):
-        return DuckDbConnectionInterface()
+    def create(cls, connection_str: str) -> "LotadConnectionInterface":
+        # Only duckdb is supported right now
+        return DuckDbConnectionInterface(connection_str)
+
+    @functools.cache
+    def get_query_template(self, query_name: str) -> Template:
+        # This is reliant on all supported dbs containing the same sql file in its queries sub dir
+        if not query_name.endswith('.sql'):
+            query_name += '.sql'
+
+        with open(
+            os.path.join(self._queries_dir, self._queries_sub_dir, query_name)
+        ) as f:
+            return Template(f.read())
 
 
 class DuckDbConnectionInterface(LotadConnectionInterface):
+    _queries_sub_dir: str = 'duckdb'
 
-    @staticmethod
-    def get_connection(db_conn_str: str, read_only: bool = True):
-        db_conn = duckdb.connect(db_conn_str, read_only=read_only)
+    def get_connection(self, read_only: bool = True):
+        db_conn = duckdb.connect(self.connection_str, read_only=read_only)
         try:
             db_conn.create_function("get_row_hash", get_row_hash)
             db_conn.execute("SET enable_progress_bar = false;")
-        except duckdb.duckdb.CatalogException:
+        except duckdb.CatalogException:
             logger.debug("Scalar Function get_row_hash already exists")
         return db_conn
 
-    @staticmethod
-    def get_schema(db_conn: duckdb.DuckDBPyConnection, table_name: str):
+    def get_schema(self, db_conn: duckdb.DuckDBPyConnection, table_name: str, ignore_dates: bool) -> dict:
         """Get schema information for a table."""
-        columns = db_conn.execute(f"""
-            SELECT column_name, data_type
-            FROM information_schema.columns
-            WHERE table_name = '{table_name}'
-            AND table_schema = 'main'
-            AND data_type NOT LIKE 'TIMESTAMP%'
-            AND data_type NOT LIKE 'DATE'
-            ORDER BY ordinal_position
-        """).fetchall()
+        query = self.get_query_template('get_schema')
+        query = query.render(table_name=table_name, ignore_dates=ignore_dates)
+        columns = db_conn.execute(
+            query
+        ).fetchall()
         return {col[0]: col[1] for col in columns}
 
     @staticmethod
@@ -57,4 +80,11 @@ class DuckDbConnectionInterface(LotadConnectionInterface):
                 "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
             ).fetchall()
         )
+
+    @staticmethod
+    def parse_db_response(db_response) -> list[dict]:
+        rows = db_response.fetchall()
+        assert db_response.description
+        column_names = [desc[0] for desc in db_response.description]
+        return [dict(zip(column_names, row)) for row in rows]
 

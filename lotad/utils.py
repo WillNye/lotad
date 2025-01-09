@@ -1,28 +1,9 @@
 import json
-import re
 import urllib.parse
 from typing import Any, Union
-from uuid import UUID
 
 import orjson
-
-import duckdb
 import xxhash
-
-UNTRACKED_VALUE_REGEXES = {
-    re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', re.IGNORECASE),
-}
-
-
-def is_tracked_column(val: Any) -> bool:
-    if isinstance(val, UUID):
-        return False
-    elif not isinstance(val, str):
-        return True
-
-    return not any(
-        regex.match(str(val)) for regex in UNTRACKED_VALUE_REGEXES
-    )
 
 
 def maybe_load_dict(val: str) -> Union[str, dict]:
@@ -70,10 +51,12 @@ def get_row_hash(row: Any) -> str:
         - Lists are converted to sorted tuples of hashed values
     """
     if isinstance(row, str) and row.startswith("{") and row.endswith("}"):
+        # Attempt to load the row as dict
         row = maybe_load_dict(row)
 
     if isinstance(row, dict):
         normalized_dict = {}
+        # Sort the dict by keys and hash its values
         for k, v in sorted(row.items()):
             if isinstance(v, str) and v.startswith("{") and v.endswith("}"):
                 v = maybe_load_dict(v)
@@ -84,6 +67,7 @@ def get_row_hash(row: Any) -> str:
             orjson.dumps(normalized_dict, option=orjson.OPT_SORT_KEYS)
         ).hexdigest()
     elif isinstance(row, list):
+        # Sort the list, hash its values, and hash the list itself
         return xxhash.xxh64(
             orjson.dumps(
                 sorted(
@@ -92,15 +76,5 @@ def get_row_hash(row: Any) -> str:
             )
         ).hexdigest()
     else:
+        # Just cast everything else to string for simplicity
         return str(row)
-
-
-def get_tables(connection: duckdb.DuckDBPyConnection) -> list[str]:
-    """Get list of all tables in a database."""
-    return sorted(
-        connection.execute(
-            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
-        ).fetchall()
-    )
-
-
