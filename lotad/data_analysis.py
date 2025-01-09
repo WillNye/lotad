@@ -3,9 +3,10 @@ import enum
 import os
 from typing import Optional
 
-import duckdb
+from jinja2 import Template
 
 from lotad.config import Config
+from lotad.connection import LotadConnectionInterface
 
 
 @dataclass
@@ -43,29 +44,23 @@ class DriftAnalysisTables(enum.Enum):
 class DriftAnalysis:
     """Manages database drift analysis between two database states.
 
-    This class provides functionality to track and analyze differences between
-    two database states, including schema changes, missing tables, missing columns,
-    and data drift.
-
-    It uses DuckDB as the backend storage for tracking these differences.
-
-    Attributes:
-        db_file_name (str): Name of the DuckDB database file used for storing analysis results.
-        db_conn (duckdb.DuckDBPyConnection): Connection to the DuckDB database.
+    This class provides functionality to track, analyze, and write differences between two database states.
+    This includes schema changes, missing tables, missing columns, and data drift.
     """
 
-    db_file_name: str = 'drift_analysis.db'
+    db_interface: LotadConnectionInterface = None
     db_conn = None
+    reports_dir = os.path.join(os.path.dirname(__file__), 'reports')
 
     def __init__(self, config: Config):
         self.config = config
 
-        if os.path.exists(self.db_file_name):
-            os.remove(self.db_file_name)
+        if os.path.exists(config.output_path):
+            os.remove(config.output_path)
 
-        if not DriftAnalysis.db_conn:
-            DriftAnalysis.db_conn = duckdb.connect(self.db_file_name)
-            self._add_tables()
+        self.db_interface = LotadConnectionInterface.create(config.output_path)
+        self.db_conn = self.db_interface.get_connection(read_only=False)
+        self._add_tables()
 
     def _add_tables(self):
         self.db_conn.execute(f"""
@@ -115,7 +110,7 @@ class DriftAnalysis:
             )
         value_str = ',\n'.join([str(v) for v in values])
         self.db_conn.execute(
-            f"INSERT INTO {DriftAnalysisTables.TABLE_SCHEMA_DRIFT.value}"
+            f"INSERT INTO {DriftAnalysisTables.TABLE_SCHEMA_DRIFT.value}\n"
             f"VALUES ({value_str});"
         )
 
@@ -134,7 +129,7 @@ class DriftAnalysis:
             )
         value_str = ',\n'.join([str(v) for v in values])
         self.db_conn.execute(
-            f"INSERT INTO {DriftAnalysisTables.MISSING_TABLE.value}"
+            f"INSERT INTO {DriftAnalysisTables.MISSING_TABLE.value}\n"
             f"VALUES ({value_str});"
         )
 
@@ -143,6 +138,8 @@ class DriftAnalysis:
         results: list[TableDataDiff],
     ):
         """Records data drift between databases for a specific table.
+
+        Also, updates the DB_DATA_DRIFT_SUMMARY table.
 
         Args:
             results (list[TableDataDiff])
@@ -153,38 +150,55 @@ class DriftAnalysis:
         for result in results:
             table_name = result.table_name
             tmp_path = result.tmp_path
-            self.db_conn.execute(f"""
-                ATTACH '{tmp_path}' AS tmp_{table_name}_db (READ_ONLY);
-            
-                CREATE OR REPLACE TABLE {table_name} AS
-                SELECT * FROM tmp_{table_name}_db.{table_name};
-            """)
-
-            db1 = self.config.db1_connection_string
-            db2 = self.config.db2_connection_string
-            self.db_conn.execute(
-                f"""
-                WITH _db1_row_summary AS (
-                    SELECT '{table_name}' as table_name,
-                        '{db1}' as db_path,
-                        COUNT(*) as rows_only_in_db
-                    FROM {table_name}
-                    WHERE observed_in = '{db1}'
-                ),
-                _db2_row_summary AS (
-                    SELECT '{table_name}' as table_name,
-                        '{db2}' as db_path,
-                        COUNT(*) as rows_only_in_db
-                    FROM {table_name}
-                    WHERE observed_in = '{db2}'
-                )
-                INSERT INTO {DriftAnalysisTables.DB_DATA_DRIFT_SUMMARY.value}
-                SELECT '{table_name}' as table_name,
-                    _db1.db_path AS db1,
-                    _db1.rows_only_in_db AS rows_only_in_db1,
-                    _db2.db_path AS db2,
-                    _db2.rows_only_in_db AS rows_only_in_db2,
-                FROM _db1_row_summary _db1
-                JOIN _db2_row_summary _db2 ON _db1.table_name = _db2.table_name
-                """
+            query = self.db_interface.get_query_template(
+                'data_analysis_set_data_drift_for_table.sql'
             )
+            self.db_conn.execute(
+                query.render(
+                    table_name=table_name,
+                    tmp_path=tmp_path,
+                )
+            )
+
+            query = self.db_interface.get_query_template('drift_analysis_extend_data_drift_summary')
+            self.db_conn.execute(
+                query.render(
+                    table_name=table_name,
+                    db1=self.config.db1_connection_string,
+                    db2=self.config.db2_connection_string,
+                    data_drift_summary_table=DriftAnalysisTables.DB_DATA_DRIFT_SUMMARY.value,
+
+                )
+            )
+
+    def get_missing_table_drift(self):
+        return self.db_interface.parse_db_response(
+            self.db_conn.execute(
+                f"SELECT * FROM {DriftAnalysisTables.MISSING_TABLE.value} ORDER BY table_name;"
+            )
+        )
+
+    def get_table_schema_drift(self):
+        return self.db_interface.parse_db_response(
+            self.db_conn.execute(
+                f"SELECT * FROM {DriftAnalysisTables.TABLE_SCHEMA_DRIFT.value} ORDER BY table_name, column_name;"
+            )
+        )
+
+    def get_data_drift_summary(self):
+        return self.db_interface.parse_db_response(
+            self.db_conn.execute(
+                f"SELECT * FROM {DriftAnalysisTables.DB_DATA_DRIFT_SUMMARY.value} ORDER BY table_name;"
+            )
+        )
+
+    def output_summary(self):
+        with open(os.path.join(self.reports_dir, 'db_comparison_report.j2')) as f:
+            comparison_report = Template(f.read())
+
+        output = comparison_report.render(
+            table_drift=self.get_missing_table_drift(),
+            table_schema_drift=self.get_table_schema_drift(),
+            data_drift=self.get_data_drift_summary(),
+        )
+        print(output)
