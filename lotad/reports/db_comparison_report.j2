@@ -1,0 +1,34 @@
+Database Comparison Report
+{%- if table_drift %}
+
+Missing Table Summary
+{%- for table in table_drift %}
+{{ table["table_name"] }} not found in {{ table["missing_in"] }}
+
+{%- endfor %}
+{%- endif %}
+{%- if table_schema_drift %}
+
+Schema Drift Summary
+{%- for table in table_schema_drift %}
+
+{{ table["table_name"] }}.{{ table["column_name"] }}
+    {{ table["db1"] }} {{ table["db1_column_type"] }}
+    {{ table["db2"] }} {{ table["db2_column_type"] }}
+{%- endfor %}
+{%- endif %}
+{%- if data_drift %}
+
+Data Drift Summary
+Format:
+    my_table
+        db1 - records only in db1
+        db2 - records only in db2
+{%- for table in data_drift %}
+
+{{ table["table_name"] }}
+    {{ table["db1"] }} - {{ table["rows_only_in_db1"] }}
+    {{ table["db2"] }} - {{ table["rows_only_in_db2"] }}
+{%- endfor %}
+
+{%- endif %}
