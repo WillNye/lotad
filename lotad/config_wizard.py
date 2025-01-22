@@ -1,5 +1,6 @@
 import multiprocessing
 import os
+import re
 import sys
 from dataclasses import dataclass
 
@@ -98,7 +99,12 @@ class ConfigWizard:
         db2 = self.config.db2.get_connection(read_only=True)
         db1_tables = self.config.db1.get_tables(db1)
         db2_tables = self.config.db2.get_tables(db2)
-        shared_tables = [table for table in db1_tables if table in db2_tables]
+        shared_tables = [
+            table
+            for table in db1_tables
+            if table in db2_tables
+            and not any(re.match(it, table[0], re.IGNORECASE) for it in self.config.ignore_tables)
+        ]
 
         existing_ignore_rules = set()
         if self.config.table_rules:

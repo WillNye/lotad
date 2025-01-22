@@ -106,6 +106,11 @@ class Config:
         self._db1 = LotadConnectionInterface.create(self.db1_connection_string)
         self._db2 = LotadConnectionInterface.create(self.db2_connection_string)
 
+        if not self.ignore_tables:
+            self.ignore_tables = []
+        if not self.target_tables:
+            self.target_tables = []
+
         if self.table_rules:
             for i, table_rule in enumerate(self.table_rules):
                 if isinstance(table_rule, dict):
