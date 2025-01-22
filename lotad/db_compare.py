@@ -207,25 +207,24 @@ def generate_schema_columns(
 
     The goal is to create columns that are the merged result of the 2 schemas
     """
-    db_columns = []
+    db_columns = dict()
     # Ensure only the columns we want
     for col, col_type in db_schema.items():
         if table_rules:
             col_rule = table_rules.get_rule(col)
             if col_rule and col_rule.rule_type == TableRuleType.IGNORE_COLUMN:
                 continue
-        if col in alt_db_schema and alt_db_schema[col] != col_type:
-            col = f'"{col}"::VARCHAR'
+
+        if col not in alt_db_schema:
+            continue
+        elif alt_db_schema[col] != col_type:
+            col_val = f'"{col}"::VARCHAR AS "{col}"'
         else:
-            col = f'"{col}"'
-        db_columns.append(col)
+            col_val = f'"{col}"'
+        db_columns[col] = col_val
 
-    # Set a null column for columns only in alt_db_schema
-    for col in alt_db_schema.keys():
-        if col not in db_schema:
-            db_columns.append(f'NULL AS "{col}"')
-
-    return db_columns
+    col_names = sorted(db_columns.keys())
+    return [db_columns[c] for c in col_names]
 
 
 def compare_table_data(config: Config, table_name: str) -> Union[TableDataDiff, None]:
@@ -289,3 +288,11 @@ def compare_table_data(config: Config, table_name: str) -> Union[TableDataDiff, 
         logger.warning(f"Failed to process table", table=table_name)
         tmp_db.close()
         return
+    except Exception as err:
+        logger.error(
+            "Failed to process table",
+            error=str(err),
+            table=table_name,
+            query=query
+        )
+        raise
