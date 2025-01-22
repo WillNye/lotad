@@ -112,7 +112,7 @@ class DriftAnalysis:
         value_str = ',\n'.join([str(v) for v in values])
         self.db_conn.execute(
             f"INSERT INTO {DriftAnalysisTables.TABLE_SCHEMA_DRIFT.value}\n"
-            f"VALUES ({value_str});"
+            f"VALUES {value_str};"
         )
 
     def add_missing_table_drift(
@@ -131,7 +131,7 @@ class DriftAnalysis:
         value_str = ',\n'.join([str(v) for v in values])
         self.db_conn.execute(
             f"INSERT INTO {DriftAnalysisTables.MISSING_TABLE.value}\n"
-            f"VALUES ({value_str});"
+            f"VALUES {value_str};"
         )
 
     def add_data_drift(

@@ -58,9 +58,6 @@ def get_row_hash(row: Any) -> str:
         normalized_dict = {}
         # Sort the dict by keys and hash its values
         for k, v in sorted(row.items()):
-            if isinstance(v, str) and v.startswith("{") and v.endswith("}"):
-                v = maybe_load_dict(v)
-
             normalized_dict[k] = get_row_hash(v)
 
         return xxhash.xxh64(
