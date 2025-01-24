@@ -14,7 +14,8 @@ Particularly useful for assessing downstream pipeline impacts.
 - Detect missing tables, columns and type mismatches
 - Analyze row differences with consistent hashing
 - Generate detailed comparison reports
-- Configure excluded/included tables and columns with regex support
+- Configure excluded/included tables with regex support
+- Specify excluded columns for each table
 
 ## Quick Start
 

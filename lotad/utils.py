@@ -9,12 +9,11 @@ import xxhash
 def maybe_load_dict(val: str) -> Union[str, dict]:
     """Attempts to parse a string as JSON, including URL-encoded JSON strings."""
     try:
+        if val.startswith("%7B"):
+            val = urllib.parse.unquote(val)
         return orjson.loads(val)
     except json.JSONDecodeError:
-        try:
-            return orjson.loads(urllib.parse.unquote(val))
-        except json.JSONDecodeError:
-            return val
+        return val
 
 
 def get_row_hash(row: Any) -> str:
@@ -50,7 +49,8 @@ def get_row_hash(row: Any) -> str:
         - Nested JSON strings are parsed and processed recursively
         - Lists are converted to sorted tuples of hashed values
     """
-    if isinstance(row, str) and row.startswith("{") and row.endswith("}"):
+    json_init_chars = ["{", "[", "%7B"]
+    if isinstance(row, str) and any(row.startswith(init_char) for init_char in json_init_chars):
         # Attempt to load the row as dict
         row = maybe_load_dict(row)
 

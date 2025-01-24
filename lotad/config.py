@@ -149,7 +149,7 @@ class Config:
         with open(self.path, 'w') as f:
             yaml.dump(config_dict, f)
 
-    def add_table_rule(self, table, rule_type: TableRuleType, rule_value: str):
+    def add_table_rule(self, table: str, rule_type: TableRuleType, rule_value: str):
         if table in self._table_rules_map:
             self._table_rules_map[table].rules.append(
                 TableRule(rule_type, rule_value)

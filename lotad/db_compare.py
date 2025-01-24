@@ -1,5 +1,7 @@
 import multiprocessing
+import os
 import re
+import tempfile
 from typing import Union
 
 import duckdb
@@ -151,7 +153,7 @@ class DatabaseComparator:
         if missing_table_drift := self.generate_missing_table_drift(
             self.db1_path,
             tables1,
-            self.db1_path,
+            self.db2_path,
             tables2,
         ):
             self.drift_analysis.add_missing_table_drift(missing_table_drift)
@@ -230,8 +232,7 @@ def generate_schema_columns(
 def compare_table_data(config: Config, table_name: str) -> Union[TableDataDiff, None]:
     """Runs the data diff check for a given table between the two dbs."""
     logger.info(f"Comparing table", table=table_name)
-
-    tmp_path = f"/tmp/lotad_config_{table_name}.db"
+    tmp_path = os.path.join(tempfile.mkdtemp(), f"lotad_{table_name}.db")
     tmp_db_interface: LotadConnectionInterface = LotadConnectionInterface.create(tmp_path)
     tmp_db = tmp_db_interface.get_connection(read_only=False)
 
