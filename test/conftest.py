@@ -1,0 +1,118 @@
+import json
+import os
+import shutil
+import tempfile
+from datetime import date, datetime
+from decimal import Decimal
+
+import duckdb
+import pytest
+from faker import Faker
+
+from lotad.config import Config
+from test import SampleTable
+
+Faker.seed(0)
+FAKER = Faker()
+
+
+def json_encoder(obj):
+    if isinstance(obj, Decimal):
+        return float(obj)
+    elif isinstance(obj, datetime) or isinstance(obj, date):
+        return obj.isoformat()
+    raise TypeError(
+        f"Object of type {type(obj).__name__} is not JSON serializable"
+    )
+
+
+def get_job_details():
+    return {
+        "position": FAKER.job(),
+        "salary": FAKER.pricetag(),
+        "company": FAKER.company(),
+        "location": f"{FAKER.city()} {FAKER.state()} {FAKER.country()}",
+        "start_date": FAKER.date(),
+    }
+
+
+def get_employee_table_data() -> tuple[str, list[dict]]:
+    rows = [FAKER.profile() for _ in range(1000)]
+    for row_id, row in enumerate(rows):
+        row["id"] = row_id + 1
+        row["previous_positions"] = json.dumps([get_job_details() for _ in range(5)])
+
+    return SampleTable.EMPLOYEE.value, rows
+
+
+def get_company_table_data():
+    rows = [
+        {
+            "id": company_id+1,
+            "name": FAKER.company(),
+            "location": f"{FAKER.city()} {FAKER.state()} {FAKER.country()}",
+            "owner": FAKER.profile(),
+            "job_openings": [get_job_details() for _ in range(10)]
+        }
+        for company_id in range(1000)
+    ]
+
+    return SampleTable.COMPANY.value, rows
+
+
+def get_user_table_data():
+    rows = [FAKER.profile() for _ in range(1000)]
+    for row_id, row in enumerate(rows):
+        row["id"] = row_id + 1
+
+    return SampleTable.USER.value, rows
+
+
+def populate_database(db_conn: duckdb.DuckDBPyConnection, tmpdir: str):
+    for table, rows in [
+        get_employee_table_data(),
+        get_company_table_data(),
+        get_user_table_data(),
+    ]:
+        json_path = os.path.join(tmpdir, f"{table}.json")
+        with open(json_path, "w") as f:
+            json.dump(rows, f, indent=2, default=json_encoder)
+
+        db_conn.execute(
+            f"CREATE TABLE {table} AS SELECT * FROM '{json_path}';"
+        )
+
+
+@pytest.fixture(scope="session")
+def create_clean_databases() -> str:
+    tmp_dir = tempfile.mkdtemp()
+
+    # Create and populate a database
+    db_path = os.path.join(tmp_dir, f"db1.db")
+    db_conn = duckdb.connect(db_path)
+    populate_database(db_conn, tmp_dir)
+    db_conn.close()
+
+    return db_path
+
+
+@pytest.fixture(scope="function")
+def config(create_clean_databases: str) -> Config:
+    clean_db_path = create_clean_databases
+    tmp_dir = tempfile.mkdtemp()
+
+    # Create a copy of the clean db files
+    # so the data is only generated once
+    db1_path = os.path.join(tmp_dir, f"db1.db")
+    shutil.copy(clean_db_path, db1_path)
+
+    db2_path = os.path.join(tmp_dir, f"db2.db")
+    shutil.copy(clean_db_path, db2_path)
+
+    return Config(
+        path=os.path.join(tmp_dir, "lotad_config.yaml"),
+        output_path=os.path.join(tmp_dir, "drift_analysis.db"),
+        db1_connection_string=db1_path,
+        db2_connection_string=db2_path,
+        ignore_dates=False,
+    )
