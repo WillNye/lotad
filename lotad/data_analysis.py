@@ -99,14 +99,17 @@ class DriftAnalysis:
     ):
         values: list[tuple] = []
         for result in results:
+            # Normalize column type to handle enums
+            db1_column_type = str(result.db1_column_type).replace('\'', '')
+            db2_column_type = str(result.db2_column_type).replace('\'', '')
             values.append(
                 (
                     f'"{result.table_name}"',
                     f'"{result.column_name}"',
                     f'"{result.db1}"',
-                    f'"{result.db1_column_type}"',
+                    f'"{db1_column_type}"',
                     f'"{result.db2}"',
-                    f'"{result.db2_column_type}"',
+                    f'"{db2_column_type}"',
                 )
             )
         value_str = ',\n'.join([str(v) for v in values])
