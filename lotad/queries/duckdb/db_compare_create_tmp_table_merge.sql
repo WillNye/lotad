@@ -1,9 +1,6 @@
 -- Write the raw db1 table contents to a temp table
 CREATE OR REPLACE TEMP TABLE {{ table_name }}_base_t1 AS
-SELECT {%- for column in db1_columns %}
-    {{ column }},
-    {%- endfor %}
-FROM db1.{{ table_name }};
+{{ db1_query }}
 
 -- Create a new table that adds observed_in and hashed_row data
 CREATE OR REPLACE TABLE {{ table_name }}_t1 AS
@@ -17,10 +14,7 @@ DROP TABLE {{ table_name }}_base_t1;
 
 -- Do the same for the db2 table
 CREATE OR REPLACE TABLE {{ table_name }}_base_t2 AS
-SELECT {%- for column in db2_columns %}
-    {{ column }},
-    {%- endfor %}
-FROM db2.{{ table_name }};
+{{ db2_query }}
 
 CREATE OR REPLACE TABLE {{ table_name }}_t2 AS
 SELECT '{{ db2_path }}' AS observed_in,
