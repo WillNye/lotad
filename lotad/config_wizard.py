@@ -6,9 +6,14 @@ from dataclasses import dataclass
 
 import click
 import duckdb
+# Both inquirer and questionary are used 
+# because neither has all the features we need
+# inquirer has a text editor option not in questionary
+# questionary is used for pretty much everything else
 import inquirer
+import questionary
 
-from lotad.config import CPU_COUNT, Config, TableRuleType
+from lotad.config import CPU_COUNT, Config, TableRule, TableRuleType
 from lotad.connection import LotadConnectionInterface
 from lotad.logger import logger
 
@@ -107,11 +112,11 @@ class ConfigWizard:
         ]
 
         existing_ignore_rules = set()
-        if self.config.table_rules:
-            for table_rules in self.config.table_rules:
-                for table_rule in table_rules.rules:
+        if self.config.table_configs:
+            for table_configs in self.config.table_configs:
+                for table_rule in table_configs.rules:
                     if table_rule.rule_type == TableRuleType.IGNORE_COLUMN:
-                        existing_ignore_rules.add(f"{table_rules.table_name}-{table_rule.rule_value}")
+                        existing_ignore_rules.add(f"{table_configs.table_name}-{table_rule.rule_value}")
 
         with multiprocessing.Pool(CPU_COUNT) as pool:
             results = []
@@ -129,10 +134,9 @@ class ConfigWizard:
                             column = column.replace('"', '')
                             rule_str = f"{table}-{column}"
                             if rule_str not in existing_ignore_rules:
-                                self.config.add_table_rule(
+                                self.config.update_table_config(
                                     table,
-                                    TableRuleType.IGNORE_COLUMN,
-                                    column
+                                    TableRule(TableRuleType.IGNORE_COLUMN, column)
                                 )
 
                 except duckdb.CatalogException:
@@ -147,16 +151,12 @@ class ConfigWizard:
             "Useful to set true for databases that work in a pipeline"
             " that always alters multiple date values on every run."
         )
-        q = [
-            inquirer.List(
-                "user_selection",
-                message="Ignore all date columns?",
-                choices=["yes", "no"],
-                default="yes" if config.ignore_dates else "no"
-            ),
-        ]
-        answers = inquirer.prompt(q)
-        config.ignore_dates = bool(answers["user_selection"] == "yes")
+        user_selection = questionary.select(
+            "Ignore all date columns?",
+            choices=["yes", "no"],
+            default="yes" if config.ignore_dates else "no"
+        )
+        config.ignore_dates = bool(user_selection == "yes")
         config.write()
         click.echo("Config updated successfully.\n")
 
@@ -192,15 +192,11 @@ class ConfigWizard:
             "A diff will be performed on all tables EXCEPT these. "
             "Supports regex. NOT case sensitive."
         )
-        q = [
-            inquirer.Text(
-                "user_selection",
-                message="Path where the DuckDB diff file will be written.",
-                default=config.output_path
-            ),
-        ]
-        answers = inquirer.prompt(q)
-        config.output_path = answers["user_selection"].replace(" ", "").replace("\n", "")
+        user_selection = questionary.text(
+            message="Path where the DuckDB diff file will be written.",
+            default=config.output_path
+        ).ask()
+        config.output_path = user_selection.replace(" ", "").replace("\n", "")
         config.write()
         click.echo("Config updated successfully.\n")
 
@@ -228,6 +224,70 @@ class ConfigWizard:
         config.write()
         click.echo("Config updated successfully.\n")
 
+    def update_custom_query(self):
+        """Config wizard prompt to update or add a custom query for a table"""
+        db1 = self.config.db1.get_connection(read_only=True)
+        db2 = self.config.db2.get_connection(read_only=True)
+        db1_tables = self.config.db1.get_tables(db1)
+        db2_tables = set(self.config.db2.get_tables(db2))
+        shared_tables = [
+            table[0] for table in db1_tables
+            if table in db2_tables
+        ]
+        
+        if not shared_tables:
+            click.echo("No shared tables found between the databases.\n")
+            return
+
+        table_name = questionary.autocomplete(
+            message="Select a table to add/update custom query for:",
+            choices=shared_tables,
+            style=questionary.Style([
+                ('qmark', 'fg:cyan bold'),
+                ('question', 'bold'),
+                ('answer', 'fg:green bold'),
+            ])
+        ).ask()
+        if not table_name:
+            return
+
+        table_config = self.config.get_table_config(table_name)
+        default_query = None if not table_config else table_config._query
+            
+        while True:
+            q = [
+                inquirer.Editor(
+                    "query",
+                    message="Enter the custom query:",
+                    default=default_query
+                ),
+            ]                
+            answers = inquirer.prompt(q)
+
+            try:
+                self.config.update_table_config(
+                    table_name,
+                    query=answers["query"]
+                )
+                break
+            except (TypeError, KeyboardInterrupt):
+                return
+            except Exception as e:
+                click.echo(f"Unable to set custom query due to: {e}")
+
+        self.config.write()
+        click.echo("Config updated successfully.\n")
+
+    def _get_existing_query(self, table_name: str) -> str:
+        """Helper method to get existing custom query for a table if it exists"""
+        if self.config.table_configs:
+            for table_config in self.config.table_configs:
+                if table_config.table_name == table_name:
+                    for rule in table_config.rules:
+                        if rule.rule_type == TableRuleType.CUSTOM_QUERY:
+                            return rule.rule_value
+        return f"SELECT * FROM {table_name}"
+
     def run_generate_ignored_columns(self):
         """Config wizard prompt to trigger generate_ignored_columns
         """
@@ -238,16 +298,12 @@ class ConfigWizard:
             "Useful for no deterministic columns like a uuid primary key.\n"
             "Will NOT remove any ignore column rules already in the config."
         )
-        q = [
-            inquirer.List(
-                "user_selection",
-                message="Proceed?",
-                choices=["yes", "no"],
-            ),
-        ]
-        answers = inquirer.prompt(q)
+        user_selection = questionary.select(
+            message="Proceed?",
+            choices=["yes", "no"],
+        ).ask()
 
-        if answers["user_selection"] == "yes":
+        if user_selection == "yes":
             self.generate_ignored_columns()
             config.write()
             click.echo("Config updated successfully.\n")
@@ -266,6 +322,7 @@ class ConfigWizard:
             "Set the list of target tables.": "update_target_tables",
             "Set the path where the DuckDB diff file will be written.": "update_output_path",
             "Set ignore date behavior for config.": "update_ignore_dates",
+            "Set a custom query for a table.": "update_custom_query",
         }
         if os.path.exists(config_path):
             config = Config.load(config_path)
@@ -274,40 +331,32 @@ class ConfigWizard:
                 "It doesn't look like this config exists yet. "
                 "Let me get a bit more information."
             )
-            questions = [
-                inquirer.Text(
-                    'db1_connection_string',
+            answers = questionary.form(                
+                db1_connection_string=questionary.text(
                     message="What is the connection string to the first target databases?"
                 ),
-                inquirer.Text(
-                    'db2_connection_string',
+                db2_connection_string=questionary.text(
                     message="What is the connection string to the second target database?"
                 ),
-                inquirer.Confirm("ignore_dates", message="Should all date columns be ignored?")
-            ]
-            answers = inquirer.prompt(questions)
-            config = Config(path=config_path, **answers.items())
+                ignore_dates=questionary.confirm(message="Should all date columns be ignored?")
+            ).ask()
+            config = Config(path=config_path, **answers)
             config.write()
 
         # Adding here to ensure it is the last option in the list
         choice_map["Done."] = "exit"
         config_builder = cls(config)
         while True:
-            questions = [
-                inquirer.List(
-                    "user_selection",
+            try:
+                user_selection = questionary.select(
                     message="What would you like to do next?",
                     choices=list(choice_map.keys()),
-                ),
-            ]
-            try:
-                answers = inquirer.prompt(questions)
-                user_selection = answers["user_selection"]
+                ).ask()
                 if user_selection == "Done.":
                     sys.exit(0)
 
                 # Run the action that corresponds to the user selected option
                 getattr(config_builder, choice_map[user_selection])()
 
-            except (KeyboardInterrupt, TypeError):
+            except (KeyError, KeyboardInterrupt, TypeError):
                 sys.exit(0)
