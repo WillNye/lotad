@@ -14,6 +14,9 @@ dependencies = [
     "pandas>=2.2.3",
     "pytest>=8.3.4",
     "pyyaml>=6.0.2",
+    "questionary>=2.1.0",
+    "sql-metadata>=2.15.0",
+    "sqlparse>=0.5.3",
     "structlog>=24.4.0",
     "xxhash>=3.5.0",
 ]

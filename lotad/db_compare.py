@@ -2,11 +2,12 @@ import multiprocessing
 import os
 import re
 import tempfile
-from typing import Union
+from typing import Optional, Union
 
 import duckdb
+from sql_metadata import Parser as SQLParser
 
-from lotad.config import Config, TableRules, TableRuleType, CPU_COUNT
+from lotad.config import Config, TableConfig, TableRuleType, CPU_COUNT
 from lotad.connection import LotadConnectionInterface
 from lotad.data_analysis import DriftAnalysis, MissingTableDrift, TableDataDiff, TableSchemaDrift
 from lotad.logger import logger
@@ -196,10 +197,53 @@ class DatabaseComparator:
         self.drift_analysis.output_summary()
 
 
+def get_table_query(
+    table_name: str, 
+    columns: list[str], 
+    db_name: str, 
+    db_interface: LotadConnectionInterface,
+    table_config: Optional[TableConfig], 
+) -> str:
+    """Generates a SQL query to select data from a table.
+
+    Used as part of db_compare_create_tmp_table_merge query.
+
+    Args:
+        table_name: Name of the table to query
+        columns: List of columns to select
+        db_name: Name of the database (db1 or db2) 
+        config: Config object containing table configurations
+    """
+    if table_config and table_config.query:
+        # If custom query exists in config, 
+        # use it but prefix tables with db name because 
+        # the query is ran as a duckdb attached db
+        query = table_config.query
+        tables = SQLParser(query).tables
+        for table in tables:
+            # Replace table names with fully qualified db.table, but only when they are
+            # standalone words (bounded by spaces, newlines, or SQL-specific characters)
+            query = re.sub(
+                rf'(?<=[\s\n(,])({re.escape(table)})(?=[\s\n),;])',
+                rf'{db_name}.\1',
+                query
+            )
+        return query
+
+    # Use default template query that selects all columns
+    query_template = db_interface.get_query_template('default_select_from_table')
+    query = query_template.render(
+        table_name=table_name,
+        columns=columns,
+        db_name=db_name,
+    )
+    return query
+
+
 def generate_schema_columns(
     db_schema: dict,
     alt_db_schema: dict,
-    table_rules: Union[TableRules, None]
+    table_configs: Union[TableConfig, None]
 ) -> list[str]:
     """Returns a normalized list of columns to use when querying the table.
 
@@ -212,8 +256,8 @@ def generate_schema_columns(
     db_columns = dict()
     # Ensure only the columns we want
     for col, col_type in db_schema.items():
-        if table_rules:
-            col_rule = table_rules.get_rule(col)
+        if table_configs:
+            col_rule = table_configs.get_rule(col)
             if col_rule and col_rule.rule_type == TableRuleType.IGNORE_COLUMN:
                 continue
 
@@ -249,7 +293,7 @@ def compare_table_data(config: Config, table_name: str) -> Union[TableDataDiff, 
     )
 
     # Pull necessary context to generate the query then close the db conns no longer being used
-    table_rules = config.get_table_rules(table_name)
+    table_config = config.get_table_config(table_name)
     db1_schema = config.db1.get_schema(db1, table_name, config.ignore_dates)
     db2_schema = config.db2.get_schema(db2, table_name, config.ignore_dates)
     db1.close()
@@ -257,18 +301,21 @@ def compare_table_data(config: Config, table_name: str) -> Union[TableDataDiff, 
 
     # Generate the query
     query_template = tmp_db_interface.get_query_template('db_compare_create_tmp_table_merge')
-    db1_columns = generate_schema_columns(db1_schema, db2_schema, table_rules)
-    db2_columns = generate_schema_columns(db2_schema, db1_schema, table_rules)
+    db1_columns = generate_schema_columns(db1_schema, db2_schema, table_config)
+    db2_columns = generate_schema_columns(db2_schema, db1_schema, table_config)
     if not db1_columns or not db2_columns:
         logger.warning("No columns found", table=table_name)
         return
+    
+    db1_query = get_table_query(table_name, db1_columns, 'db1', tmp_db_interface, table_config)
+    db2_query = get_table_query(table_name, db2_columns, 'db2', tmp_db_interface, table_config)
 
     query = query_template.render(
         table_name=table_name,
         db1_path=db1_path,
-        db1_columns=db1_columns,
         db2_path=db2_path,
-        db2_columns=db2_columns,
+        db1_query=db1_query,
+        db2_query=db2_query,
     )
 
     try:

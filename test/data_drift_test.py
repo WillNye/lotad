@@ -4,7 +4,7 @@ from typing import Any
 
 import duckdb
 
-from lotad.config import Config, TableRuleType
+from lotad.config import Config, TableRule, TableRuleType
 from lotad.data_analysis import DriftAnalysisTables
 from lotad.db_compare import DatabaseComparator
 from test import SampleTable
@@ -227,10 +227,9 @@ def run_compare(
 def test_no_delta_on_ignored_column(config: Config):
     test_table = SampleTable.EMPLOYEE.value
     ignored_column = "blood_group"
-    config.add_table_rule(
+    config.update_table_config(
         test_table,
-        rule_type=TableRuleType.IGNORE_COLUMN,
-        rule_value=ignored_column
+        table_rule=TableRule(TableRuleType.IGNORE_COLUMN, ignored_column)
     )
 
     run_value_delta(

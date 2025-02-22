@@ -3,6 +3,7 @@ import enum
 import os
 from typing import Optional
 
+import click
 from jinja2 import Template
 
 from lotad.config import Config
@@ -205,4 +206,4 @@ class DriftAnalysis:
             table_schema_drift=self.get_table_schema_drift(),
             data_drift=self.get_data_drift_summary(),
         )
-        print(output)
+        click.echo(output)
