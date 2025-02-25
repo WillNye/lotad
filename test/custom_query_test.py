@@ -76,8 +76,8 @@ def test_join_query(config: Config):
     expected_query = f"""
     SELECT u.id, u.name, u.last_name, e.position, e.blood_group
     FROM db1.user u
-    JOIN db1.employee e ON u.id = e.user_id
-    ;""".replace("    ", "").lstrip("\n")
+    JOIN db1.employee e ON u.id = e.user_id;""".replace("    ", "").lstrip("\n")
+
     assert table_query == expected_query
 
 
@@ -110,8 +110,7 @@ def test_subquery(config: Config):
     c.id,
     c.name,
     (SELECT COUNT(*) FROM db2.employee e WHERE e.company_id = c.id) as employee_count
-    FROM db2.company c
-    ;""".replace("    ", "").lstrip("\n")
+    FROM db2.company c;""".replace("    ", "").lstrip("\n")
 
     assert table_query == expected_query
 
