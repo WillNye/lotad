@@ -1,6 +1,6 @@
 [project]
 name = "lotad"
-version = "0.1.3"
+version = "0.1.4"
 description = "Lotad helps you identify schema changes, data differences, and structural modifications between database versions."
 readme = "README.md"
 requires-python = ">=3.12"
