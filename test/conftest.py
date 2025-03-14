@@ -10,6 +10,7 @@ import pytest
 from faker import Faker
 
 from lotad.config import Config
+from lotad.connection import DatabaseDetails, DatabaseType
 from test import SampleTable
 
 Faker.seed(0)
@@ -48,13 +49,13 @@ def get_employee_table_data() -> tuple[str, list[dict]]:
 def get_company_table_data():
     rows = [
         {
-            "id": company_id+1,
+            "id": company_id,
             "name": FAKER.company(),
             "location": f"{FAKER.city()} {FAKER.state()} {FAKER.country()}",
             "owner": FAKER.profile(),
             "job_openings": [get_job_details() for _ in range(10)]
         }
-        for company_id in range(1000)
+        for company_id in range(1, 1000)
     ]
 
     return SampleTable.COMPANY.value, rows
@@ -84,7 +85,7 @@ def populate_database(db_conn: duckdb.DuckDBPyConnection, tmpdir: str):
 
 
 @pytest.fixture(scope="session")
-def create_clean_databases() -> str:
+def create_clean_duckdb_database() -> str:
     tmp_dir = tempfile.mkdtemp()
 
     # Create and populate a database
@@ -96,9 +97,74 @@ def create_clean_databases() -> str:
     return db_path
 
 
+@pytest.fixture(scope="session")
+def create_clean_postgres_database(create_clean_duckdb_database: str) -> dict:
+    """
+    Creates a clean PostgreSQL database populated with data from DuckDB.
+    Returns a tuple of (host, port) for connecting to the PostgreSQL database.
+    """
+    # PostgreSQL connection details
+    pg_host = "localhost"
+    pg_port = "5433"
+    pg_user = "postgres"
+    pg_db = "test"
+
+    # Connect to the DuckDB database
+    duckdb_conn = duckdb.connect(create_clean_duckdb_database)
+
+    # Attach PostgreSQL database
+    duckdb_conn.execute(f"""
+        ATTACH 'dbname={pg_db} host={pg_host} port={pg_port} user={pg_user}' AS pg (TYPE postgres);
+    """)
+
+    # For each table, create and copy data to PostgreSQL
+    for table in SampleTable:
+        # Create the table in PostgreSQL and copy data from DuckDB
+
+        schema_info = duckdb_conn.execute(f"DESCRIBE {table.value}").fetchall()
+        # Create table in PostgreSQL with appropriate column types
+        columns = []
+        for col_info in schema_info:
+            col_name = col_info[0]
+            col_type = col_info[1]
+            
+            # Convert complex types to JSON strings for PostgreSQL compatibility
+            if 'STRUCT' in col_type or 'LIST' in col_type:
+                columns.append(f"{col_name} JSON")
+            else:
+                # Map DuckDB types to PostgreSQL types
+                pg_type = col_type
+                if col_type == 'VARCHAR':
+                    pg_type = 'TEXT'
+                elif col_type == 'UBIGINT':
+                    pg_type = 'BIGINT'
+                
+                columns.append(f"{col_name} {pg_type}")
+        
+        # Create the table in PostgreSQL
+        column_defs = ", ".join(columns)
+        duckdb_conn.execute(f"DROP TABLE IF EXISTS pg.{table.value}")
+        duckdb_conn.execute(f"CREATE TABLE pg.{table.value} ({column_defs})")
+        
+        # Convert complex types to JSON strings and insert data
+        duckdb_conn.execute(f"""
+            INSERT INTO pg.{table.value}
+            SELECT * FROM {table.value};
+        """)
+
+    duckdb_conn.close()
+
+    return {
+        "path": pg_host,
+        "port": pg_port,
+        "database": pg_db,
+        "user": pg_user,
+    }
+
+
 @pytest.fixture(scope="function")
-def config(create_clean_databases: str) -> Config:
-    clean_db_path = create_clean_databases
+def duckdb_config(create_clean_duckdb_database: str) -> Config:
+    clean_db_path = create_clean_duckdb_database
     tmp_dir = tempfile.mkdtemp()
 
     # Create a copy of the clean db files
@@ -112,7 +178,43 @@ def config(create_clean_databases: str) -> Config:
     return Config(
         path=os.path.join(tmp_dir, "lotad_config.yaml"),
         output_path=os.path.join(tmp_dir, "drift_analysis.db"),
-        db1_connection_string=db1_path,
-        db2_connection_string=db2_path,
+        db1_details=DatabaseDetails(database_type=DatabaseType.DUCKDB, path=db1_path),
+        db2_details=DatabaseDetails(database_type=DatabaseType.DUCKDB, path=db2_path),
         ignore_dates=False,
     )
+
+
+@pytest.fixture(scope="function")
+def postgres_config(
+    create_clean_duckdb_database: str,
+    create_clean_postgres_database: dict,
+):
+    clean_db_path = create_clean_duckdb_database
+    tmp_dir = tempfile.mkdtemp()
+
+    # Create a copy of the clean db files
+    # so the data is only generated once
+    db1_path = os.path.join(tmp_dir, f"db1.db")
+    shutil.copy(clean_db_path, db1_path)
+
+    return Config(
+        path=os.path.join(tmp_dir, "lotad_config.yaml"),
+        output_path=os.path.join(tmp_dir, "drift_analysis.db"),
+        db1_details=DatabaseDetails(database_type=DatabaseType.DUCKDB, path=db1_path),
+        db2_details=DatabaseDetails(database_type=DatabaseType.POSTGRESQL, **create_clean_postgres_database),
+        ignore_dates=False,
+    )
+
+
+@pytest.fixture(scope="function")
+def config(request):
+    """
+    This fixture returns the appropriate config based on the parameter.
+    It acts as a bridge between the parameterized test and the actual config fixtures.
+    """
+    if request.param == "duckdb_config":
+        return request.getfixturevalue("duckdb_config")
+    elif request.param == "postgres_config":
+        return request.getfixturevalue("postgres_config")
+    else:
+        raise ValueError(f"Unknown config type: {request.param}")
