@@ -7,8 +7,8 @@ from typing import Optional, Union
 import duckdb
 from sql_metadata import Parser as SQLParser
 
-from lotad.config import Config, TableConfig, TableRuleType, CPU_COUNT
-from lotad.connection import LotadConnectionInterface
+from lotad.config import Config, TableConfig, TableRuleType, CPU_COUNT, DatabaseDetails
+from lotad.connection import LotadConnectionInterface, DatabaseType
 from lotad.data_analysis import DriftAnalysis, MissingTableDrift, TableDataDiff, TableSchemaDrift
 from lotad.logger import logger
 
@@ -27,8 +27,8 @@ class DatabaseComparator:
 
     def __init__(self, config: Config):
         self.config = config
-        self.db1_path = config.db1.connection_str
-        self.db2_path = config.db2.connection_str
+        self.db1_id = config.db1.db_id
+        self.db2_id = config.db2.db_id
 
         self.drift_analysis = DriftAnalysis(self.config)
 
@@ -55,8 +55,8 @@ class DatabaseComparator:
             response.append(
                 TableSchemaDrift(
                     table_name=table_name,
-                    db1=self.db1_path,
-                    db2=self.db2_path,
+                    db1=self.db1_id,
+                    db2=self.db2_id,
                     column_name=column,
                     db1_column_type=schema1[column],
                     db2_column_type=None,
@@ -68,8 +68,8 @@ class DatabaseComparator:
             response.append(
                 TableSchemaDrift(
                     table_name=table_name,
-                    db1=self.db1_path,
-                    db2=self.db2_path,
+                    db1=self.db1_id,
+                    db2=self.db2_id,
                     column_name=column,
                     db1_column_type=None,
                     db2_column_type=schema2[column],
@@ -79,16 +79,20 @@ class DatabaseComparator:
         # Column type mismatches
         for col in set(schema1.keys()) & set(schema2.keys()):
             if schema1[col] != schema2[col]:
-                response.append(
-                    TableSchemaDrift(
-                        table_name=table_name,
-                        db1=self.db1_path,
-                        db2=self.db2_path,
-                        column_name=col,
-                        db1_column_type=schema1[col],
-                        db2_column_type=schema2[col],
+                if (
+                    self.config.db1.get_generic_column_type(schema1[col])
+                    != self.config.db2.get_generic_column_type(schema2[col])
+                ):
+                    response.append(
+                        TableSchemaDrift(
+                            table_name=table_name,
+                            db1=self.db1_id,
+                            db2=self.db2_id,
+                            column_name=col,
+                            db1_column_type=schema1[col],
+                            db2_column_type=schema2[col],
+                        )
                     )
-                )
 
         return response
 
@@ -138,8 +142,8 @@ class DatabaseComparator:
         db1 = self.config.db1.get_connection(read_only=True)
         db2 = self.config.db2.get_connection(read_only=True)
 
-        tables1 = set(table[0] for table in self.config.db1.get_tables(db1))
-        tables2 = set(table[0] for table in self.config.db2.get_tables(db2))
+        tables1 = set(table[0] for table in self.config.db1.list_tables(db1))
+        tables2 = set(table[0] for table in self.config.db2.list_tables(db2))
         all_tables = sorted(tables1 & tables2)
 
         # Calculate schema drift for all tables and write to drift analysis db
@@ -152,9 +156,9 @@ class DatabaseComparator:
 
         # Calculate missing tables and write to drift analysis db
         if missing_table_drift := self.generate_missing_table_drift(
-            self.db1_path,
+            self.db1_id,
             tables1,
-            self.db2_path,
+            self.db2_id,
             tables2,
         ):
             self.drift_analysis.add_missing_table_drift(missing_table_drift)
@@ -212,7 +216,8 @@ def get_table_query(
         table_name: Name of the table to query
         columns: List of columns to select
         db_name: Name of the database (db1 or db2) 
-        config: Config object containing table configurations
+        db_interface:
+        table_config:
     """
     if table_config and table_config.query:
         # If custom query exists in config, 
@@ -263,6 +268,11 @@ def generate_schema_columns(
 
         if col not in alt_db_schema:
             continue
+        elif (
+            any(col_type.startswith(c_type) for c_type in ["STRUCT", "MAP", "LIST", "ARRAY"])
+            or col_type.endswith("[]")
+        ):
+            col_val = f'to_json("{col}") AS "{col}"'
         elif alt_db_schema[col] != col_type:
             col_val = f'"{col}"::VARCHAR AS "{col}"'
         else:
@@ -277,19 +287,21 @@ def compare_table_data(config: Config, table_name: str) -> Union[TableDataDiff, 
     """Runs the data diff check for a given table between the two dbs."""
     logger.info(f"Comparing table", table=table_name)
     tmp_path = os.path.join(tempfile.mkdtemp(), f"lotad_{table_name}.db")
-    tmp_db_interface: LotadConnectionInterface = LotadConnectionInterface.create(tmp_path)
+    tmp_db_interface: LotadConnectionInterface = LotadConnectionInterface.create(
+        DatabaseDetails(database_type=DatabaseType.DUCKDB, path=tmp_path)
+    )
     tmp_db = tmp_db_interface.get_connection(read_only=False)
 
-    db1_path = config.db1.connection_str
+    db1_id = config.db1.db_id
     db1 = config.db1.get_connection(read_only=True)
 
-    db2_path = config.db2.connection_str
+    db2_id = config.db2.db_id
     db2 = config.db2.get_connection(read_only=True)
 
     # Attach the dbs to the tmp db so they can be used in queries
     tmp_db.execute(
-        f"ATTACH '{db1_path}' AS db1 (READ_ONLY);\n"
-        f"ATTACH '{db2_path}' AS db2 (READ_ONLY);".lstrip()
+        f"ATTACH '{config.db1.connection_string}' AS db1 {config.db1.attach_db_params(True)};\n"
+        f"ATTACH '{config.db2.connection_string}' AS db2 {config.db2.attach_db_params(True)};".lstrip()
     )
 
     # Pull necessary context to generate the query then close the db conns no longer being used
@@ -312,8 +324,8 @@ def compare_table_data(config: Config, table_name: str) -> Union[TableDataDiff, 
 
     query = query_template.render(
         table_name=table_name,
-        db1_path=db1_path,
-        db2_path=db2_path,
+        db1_path=db1_id,
+        db2_path=db2_id,
         db1_query=db1_query,
         db2_query=db2_query,
     )

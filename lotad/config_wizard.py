@@ -3,6 +3,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass
+from typing import Optional
 
 import click
 import duckdb
@@ -14,7 +15,7 @@ import inquirer
 import questionary
 
 from lotad.config import CPU_COUNT, Config, TableRule, TableRuleType
-from lotad.connection import LotadConnectionInterface
+from lotad.connection import LotadConnectionInterface, DatabaseType, DatabaseDetails
 from lotad.logger import logger
 
 
@@ -28,8 +29,6 @@ class ConfigWizard:
 
     def __init__(self, config: Config):
         self.config = config
-        self.db1_path = config.db1_connection_string
-        self.db2_path = config.db2_connection_string
 
     def get_table_ignore_columns(self, table_name: str) -> IgnoreColumnSuggestions:
         """Returns all columns with no matching values between the 2 dbs
@@ -62,17 +61,18 @@ class ConfigWizard:
             if col in db2_schema and col_type == db2_schema[col]
         }
 
+        config = self.config
         tmp_db.execute(
-            f"ATTACH '{self.db1_path}' AS db1 (READ_ONLY);\n"
-            f"ATTACH '{self.db2_path}' AS db2 (READ_ONLY);".lstrip()
+            f"ATTACH '{config.db1.connection_string}' AS db1 {config.db1.attach_db_params(True)};\n"
+            f"ATTACH '{config.db2.connection_string}' AS db2 {config.db2.attach_db_params(True)};".lstrip()
         )
 
         query = tmp_db_interface.get_query_template('config_builder_ignore_columns_create_table')
         tmp_db.execute(
             query.render(
                 table_name=table_name,
-                db1_path=self.db1_path,
-                db2_path=self.db2_path,
+                db1_path=config.db1_details.db_id,
+                db2_path=config.db2_details.db_id,
                 shared_columns=list(shared_columns.keys())
             )
         )
@@ -102,8 +102,8 @@ class ConfigWizard:
 
         db1 = self.config.db1.get_connection(read_only=True)
         db2 = self.config.db2.get_connection(read_only=True)
-        db1_tables = self.config.db1.get_tables(db1)
-        db2_tables = self.config.db2.get_tables(db2)
+        db1_tables = self.config.db1.list_tables(db1)
+        db2_tables = self.config.db2.list_tables(db2)
         shared_tables = [
             table
             for table in db1_tables
@@ -228,8 +228,8 @@ class ConfigWizard:
         """Config wizard prompt to update or add a custom query for a table"""
         db1 = self.config.db1.get_connection(read_only=True)
         db2 = self.config.db2.get_connection(read_only=True)
-        db1_tables = self.config.db1.get_tables(db1)
-        db2_tables = set(self.config.db2.get_tables(db2))
+        db1_tables = self.config.db1.list_tables(db1)
+        db2_tables = set(self.config.db2.list_tables(db2))
         shared_tables = [
             table[0] for table in db1_tables
             if table in db2_tables
@@ -311,11 +311,63 @@ class ConfigWizard:
             click.echo("Ignored columns were not generated. Going back.")
 
     @staticmethod
+    def set_database_details():
+
+        db_type = questionary.select(
+            message="What type of database are you connecting to?",
+            choices=[db_type.value for db_type in DatabaseType],
+        ).ask()
+        if db_type == DatabaseType.DUCKDB.value:
+            return DatabaseDetails(
+                database_type=DatabaseType.DUCKDB,
+                path=questionary.text(
+                    message="What is the DuckDB path?",
+                ).ask(),
+            )
+        elif db_type == DatabaseType.POSTGRESQL.value:
+            host = questionary.text(
+                message="What is the host? Example: 127.0.0.1",
+            ).ask()
+            port = questionary.text(
+                message="What is the port? Example: 5432 (default)",
+                default="5432",
+            ).ask()
+            database = questionary.text(
+                message="What is the database name?",
+            ).ask()
+            user = questionary.text(
+                message="What is the PostgreSQL user?",
+            ).ask()
+            password = None
+            passfile = None
+
+            if questionary.confirm("Does the user have a password?").ask():
+                password = questionary.password(
+                    message="What is the user password?",
+                ).ask()
+            elif questionary.confirm("Does the user have a passfile?").ask():
+                passfile = questionary.text(
+                    message="What is the passfile path?",
+                ).ask()
+
+            return DatabaseDetails(
+                database_type=DatabaseType.POSTGRESQL,
+                path=host,
+                port=port,
+                user=user,
+                password=password,
+                passfile=passfile,
+                database=database,
+            )
+        else:
+            raise ValueError("Invalid database type")
+
+    @staticmethod
     def exit():
         sys.exit(0)
 
     @classmethod
-    def cli_start(cls, config_path: str):
+    def cli_start(cls, config_path: Optional[str] = None):
         choice_map = {
             "Generate ignored columns for tables.": "run_generate_ignored_columns",
             "Set the list of ignored tables.": "update_ignore_tables",
@@ -324,6 +376,13 @@ class ConfigWizard:
             "Set ignore date behavior for config.": "update_ignore_dates",
             "Set a custom query for a table.": "update_custom_query",
         }
+        if not config_path:
+            config_path = questionary.text(
+                message="What is the path of the config file, including the file name?",
+            ).ask()
+            if not config_path:
+                sys.exit(0)
+
         if os.path.exists(config_path):
             config = Config.load(config_path)
         else:
@@ -331,16 +390,13 @@ class ConfigWizard:
                 "It doesn't look like this config exists yet. "
                 "Let me get a bit more information."
             )
-            answers = questionary.form(                
-                db1_connection_string=questionary.text(
-                    message="What is the connection string to the first target databases?"
-                ),
-                db2_connection_string=questionary.text(
-                    message="What is the connection string to the second target database?"
-                ),
-                ignore_dates=questionary.confirm(message="Should all date columns be ignored?")
-            ).ask()
-            config = Config(path=config_path, **answers)
+
+            config = Config(
+                path=config_path,
+                db1_details=cls.set_database_details(),
+                db2_details=cls.set_database_details(),
+                ignore_dates=questionary.confirm(message="Should all date columns be ignored?").ask()
+            )
             config.write()
 
         # Adding here to ensure it is the last option in the list

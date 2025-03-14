@@ -1,12 +1,14 @@
+import hashlib
 import os
 from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Optional, Union
 
 import yaml
+from dotenv import load_dotenv
 from sql_metadata import Parser as SQLParser
 
-from lotad.connection import LotadConnectionInterface
+from lotad.connection import DatabaseDetails, LotadConnectionInterface
 
 CPU_COUNT = max(os.cpu_count() - 2, 2)
 
@@ -20,7 +22,39 @@ def str_presenter(dumper, data):
 
 
 yaml.add_representer(str, str_presenter)
-yaml.representer.SafeRepresenter.add_representer(str, str_presenter) # to use with safe_dum
+yaml.representer.SafeRepresenter.add_representer(str, str_presenter)  # to use with safe_dum
+
+
+def add_to_env(key, value, env_path):
+    # Check if file exists
+    file_exists = os.path.isfile(env_path)
+
+    # Read existing content
+    env_content = ""
+    if file_exists:
+        with open(env_path, "r") as f:
+            env_content = f.read()
+
+    # Check if key already exists
+    if f"{key}=" in env_content:
+        # Replace existing line
+        lines = env_content.split("\n")
+        for i, line in enumerate(lines):
+            if line.startswith(f"{key}="):
+                lines[i] = f"{key}={value}"
+                break
+        env_content = "\n".join(lines)
+    else:
+        # Add new line
+        if env_content and not env_content.endswith("\n"):
+            env_content += "\n"
+        env_content += f"{key}={value}\n"
+
+    # Write back to file
+    with open(env_path, "w") as f:
+        f.write(env_content)
+
+    return True
 
 
 class TableRuleType(Enum):
@@ -44,6 +78,7 @@ class TableRule:
             'rule_type': self.rule_type.value,
             'rule_value': self.rule_value,
         }
+
 
 @dataclass
 class TableConfig:
@@ -132,8 +167,8 @@ class TableConfig:
 class Config:
     path: str
 
-    db1_connection_string: str
-    db2_connection_string: str
+    db1_details: DatabaseDetails
+    db2_details: DatabaseDetails
 
     output_path: str = 'drift_analysis.db'
 
@@ -159,16 +194,46 @@ class Config:
             return Config(path=path, **config_dict)
 
     @property
-    def db1(self):
+    def db1(self) -> LotadConnectionInterface:
         return self._db1
 
     @property
-    def db2(self):
+    def db2(self) -> LotadConnectionInterface:
         return self._db2
 
+    @property
+    def _config_path(self) -> str:
+        return str(os.path.dirname(self.path))
+
+    @property
+    def _env_prefix(self) -> str:
+        # using the hash to prevent collisions
+        # if there are multiple configs in the same directory
+        return f"lotad_{hashlib.md5(self.path.encode()).hexdigest()}"
+
+    @property
+    def _db1_env_name(self):
+        return f"{self._env_prefix}_password_db1"
+
+    @property
+    def _db2_env_name(self):
+        return f"{self._env_prefix}_password_db2"
+
     def __post_init__(self):
-        self._db1 = LotadConnectionInterface.create(self.db1_connection_string)
-        self._db2 = LotadConnectionInterface.create(self.db2_connection_string)
+        load_dotenv(os.path.join(self._config_path, ".env"))
+
+        if isinstance(self.db1_details, dict):
+            self.db1_details = DatabaseDetails(**self.db1_details)
+            if db_password := os.getenv(self._db1_env_name):
+                self.db1_details.password = db_password
+
+        if isinstance(self.db2_details, dict):
+            self.db2_details = DatabaseDetails(**self.db2_details)
+            if db_password := os.getenv(self._db2_env_name):
+                self.db2_details.password = db_password
+
+        self._db1 = LotadConnectionInterface.create(self.db1_details)
+        self._db2 = LotadConnectionInterface.create(self.db2_details)
 
         if not self.ignore_tables:
             self.ignore_tables = []
@@ -193,6 +258,8 @@ class Config:
             for k, v in asdict(self).items()
             if v and not (k in self._unversioned_config_attrs or k.startswith('_'))
         }
+        response["db1_details"] = self.db1_details.dict()
+        response["db2_details"] = self.db2_details.dict()
 
         if "target_tables" in response:
             response["target_tables"] = sorted(response["target_tables"])
@@ -212,6 +279,12 @@ class Config:
         config_dict = self.dict()
         with open(self.path, 'w') as f:
             yaml.dump(config_dict, f, indent=2)
+        env_path = os.path.join(self._config_path, ".env")
+
+        if db_password := self.db1_details.password:
+            add_to_env(self._db1_env_name, db_password, env_path)
+        if db_password := self.db2_details.password:
+            add_to_env(self._db2_env_name, db_password, env_path)
 
     def update_table_config(
         self, 

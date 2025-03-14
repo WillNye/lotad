@@ -7,7 +7,7 @@ import click
 from jinja2 import Template
 
 from lotad.config import Config
-from lotad.connection import LotadConnectionInterface
+from lotad.connection import LotadConnectionInterface, DatabaseDetails, DatabaseType
 
 
 @dataclass
@@ -60,7 +60,9 @@ class DriftAnalysis:
         if os.path.exists(output_path):
             os.remove(output_path)
 
-        self.db_interface = LotadConnectionInterface.create(output_path)
+        self.db_interface = LotadConnectionInterface.create(
+            DatabaseDetails(database_type=DatabaseType.DUCKDB, path=output_path)
+        )
         self.db_conn = self.db_interface.get_connection(read_only=False)
         self._add_tables()
 
@@ -169,8 +171,8 @@ class DriftAnalysis:
             self.db_conn.execute(
                 query.render(
                     table_name=table_name,
-                    db1=self.config.db1.connection_str,
-                    db2=self.config.db2.connection_str,
+                    db1=self.config.db1.db_id,
+                    db2=self.config.db2.db_id,
                     data_drift_summary_table=DriftAnalysisTables.DB_DATA_DRIFT_SUMMARY.value,
 
                 )
