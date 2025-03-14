@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:latest
+    container_name: postgres-test
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: test
+      POSTGRES_HOST_AUTH_METHOD: trust  # No password required
+    ports:
+      - "5433:5432"  # Non-standard port to prevent accidental collisions (host:container)
+    restart: unless-stopped 

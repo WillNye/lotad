@@ -6,12 +6,13 @@ on:
       - main
 
 jobs:
-  uv-example:
-    name: python
+  run-tests:
+    name: Run Python Tests
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -20,5 +21,4 @@ jobs:
         run: uv sync --all-extras --dev
 
       - name: Run tests
-        # For example, using `pytest`
-        run: uv run pytest test
+        run: make test

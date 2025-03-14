@@ -1,6 +1,6 @@
 [project]
 name = "lotad"
-version = "0.1.4"
+version = "0.2.0"
 description = "Lotad helps you identify schema changes, data differences, and structural modifications between database versions."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -14,6 +14,7 @@ dependencies = [
     "orjson>=3.10.13",
     "pandas>=2.2.3",
     "pytest>=8.3.4",
+    "python-dotenv>=1.0.1",
     "pyyaml>=6.0.2",
     "questionary>=2.1.0",
     "sql-metadata>=2.15.0",

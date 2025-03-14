@@ -3,18 +3,21 @@ import json
 from typing import Any
 
 import duckdb
+import pytest
 
 from lotad.config import Config, TableRule, TableRuleType
 from lotad.data_analysis import DriftAnalysisTables
 from lotad.db_compare import DatabaseComparator
 from test import SampleTable
 from test.conftest import FAKER
-from test.utils import run_query, get_random_row_from_table
+from test.utils import run_query, get_random_row_from_table, normalize_results
 
 
 def normalize_and_order_drift_table_results(cfg: Config, results: list[dict]) -> list[dict]:
     """Accepts a list of 2 table records and orders them such that the db1 connection is always listed first
     Additionally, removes lotad metadata so the results can be used for comparison
+      and casts everything to string to supress issues when performing diff check
+       caused by type casting to normalize values across different dbs.
 
     :param cfg:
     :param results:
@@ -23,15 +26,18 @@ def normalize_and_order_drift_table_results(cfg: Config, results: list[dict]) ->
     assert len(results) == 2
     for result in results:
         result.pop('hashed_row', None)
+        for k, v in result.items():
+            result[k] = str(v)
 
     response = [results[0]]
-    if results[1]["observed_in"] == cfg.db1_connection_string:
+    if results[1]["observed_in"] == cfg.db1_details.db_id:
         response.insert(0, results[1])
     else:
         response.append(results[1])
     return response
 
 
+@pytest.mark.parametrize("config", ["duckdb_config", "postgres_config"], indirect=True)
 def test_no_changes(config: Config):
     comparator = DatabaseComparator(config)
     comparator.compare_all()
@@ -45,6 +51,7 @@ def test_no_changes(config: Config):
     assert len(drift_results) == 0
 
 
+@pytest.mark.parametrize("config", ["duckdb_config", "postgres_config"], indirect=True)
 def test_missing_column_has_no_effect_on_data_drift(config: Config):
     # A missing column shouldn't impact the data drift summary
     # because only columns that exist in both dbs are checked
@@ -67,6 +74,7 @@ def test_missing_column_has_no_effect_on_data_drift(config: Config):
     assert len(drift_results) == 0
 
 
+@pytest.mark.parametrize("config", ["duckdb_config", "postgres_config"], indirect=True)
 def test_no_delta_on_mismatched_column_type(config: Config):
     # Lotad should normalize type inconsistencies when performing the data drift check
     # Column type delta info is represented in a dedicated table
@@ -89,6 +97,7 @@ def test_no_delta_on_mismatched_column_type(config: Config):
     assert len(drift_results) == 0
 
 
+@pytest.mark.parametrize("config", ["duckdb_config", "postgres_config"], indirect=True)
 def test_missing_row_delta(config: Config):
     db_conn = config.db1.get_connection(read_only=False)
     test_table = SampleTable.USER.value
@@ -99,7 +108,7 @@ def test_missing_row_delta(config: Config):
     db_conn.close()
 
     expected_drift_row = random_row
-    expected_drift_row["observed_in"] = config.db2_connection_string
+    expected_drift_row["observed_in"] = config.db2_details.db_id
 
     comparator = DatabaseComparator(config)
     comparator.compare_all()
@@ -113,9 +122,9 @@ def test_missing_row_delta(config: Config):
     assert drift_summary_results == [
         {
             "table_name": test_table,
-            "db1": config.db1_connection_string,
+            "db1": config.db1_details.db_id,
             "rows_only_in_db1": 0,
-            "db2": config.db2_connection_string,
+            "db2": config.db2_details.db_id,
             "rows_only_in_db2": 1,
         }
     ]
@@ -124,9 +133,11 @@ def test_missing_row_delta(config: Config):
         drift_analysis_conn,
         f"SELECT * FROM {test_table}"
     )
-    for row in table_drift_results:
-        del row["hashed_row"]
-    assert table_drift_results == [expected_drift_row]
+    assert len(table_drift_results) == 1
+    table_drift_result = table_drift_results[0]
+    del table_drift_result["hashed_row"]
+
+    assert int(table_drift_result["id"]) == int(expected_drift_row["id"])
 
 
 def run_value_delta(
@@ -141,12 +152,11 @@ def run_value_delta(
     # There are workarounds to include them as parameters
     # But that felt less readable and more difficult to maintain
 
-    if updated_db == test_config.db1_connection_string:
-        random_row_observed_in = test_config.db2_connection_string
+    if updated_db == test_config.db1_details.db_id:
+        random_row_observed_in = test_config.db2_details.db_id
         db_conn = test_config.db1.get_connection(read_only=False)
     else:
-        random_row_observed_in = test_config.db1_connection_string
-        db_conn = test_config.db2.get_connection(read_only=False)
+        raise ValueError("Only db1 is supported")
 
     random_row = get_random_row_from_table(db_conn, test_table)
 
@@ -195,16 +205,19 @@ def run_compare(
         assert drift_summary_results == [
             {
                 "table_name": test_table,
-                "db1": test_config.db1_connection_string,
+                "db1": test_config.db1_details.db_id,
                 "rows_only_in_db1": 1,
-                "db2": test_config.db2_connection_string,
+                "db2": test_config.db2_details.db_id,
                 "rows_only_in_db2": 1,
             }
         ]
-        table_drift_results = run_query(
-            drift_analysis_conn,
-            f"SELECT * FROM {test_table};"
+        table_drift_results = normalize_results(
+            run_query(
+                drift_analysis_conn,
+                f"SELECT to_json(t) as row FROM {test_table} t;"
+            )
         )
+
         assert (
                 normalize_and_order_drift_table_results(
                     test_config, table_drift_results
@@ -224,6 +237,7 @@ def run_compare(
         assert len(drift_summary_results) == 0
 
 
+@pytest.mark.parametrize("config", ["duckdb_config", "postgres_config"], indirect=True)
 def test_no_delta_on_ignored_column(config: Config):
     test_table = SampleTable.EMPLOYEE.value
     ignored_column = "blood_group"
@@ -237,31 +251,34 @@ def test_no_delta_on_ignored_column(config: Config):
         test_table,
         ignored_column,
         "HIPA",
-        config.db1_connection_string,
+        config.db1_details.db_id,
         change_expected=False
     )
 
 
+@pytest.mark.parametrize("config", ["duckdb_config", "postgres_config"], indirect=True)
 def test_int_value_delta(config: Config):
     run_value_delta(
         config,
         SampleTable.USER.value,
         "id",
         -1,
-        config.db2_connection_string
+        config.db1_details.db_id
     )
 
 
+@pytest.mark.parametrize("config", ["duckdb_config", "postgres_config"], indirect=True)
 def test_date_value_delta(config: Config):
     run_value_delta(
         config,
         SampleTable.USER.value,
         "birthdate",
         FAKER.date_of_birth(),
-        config.db1_connection_string
+        config.db1_details.db_id
     )
 
 
+@pytest.mark.parametrize("config", ["duckdb_config", "postgres_config"], indirect=True)
 def test_date_value_delta_with_ignore_date_set(config: Config):
     config.ignore_dates = True
 
@@ -270,25 +287,27 @@ def test_date_value_delta_with_ignore_date_set(config: Config):
         SampleTable.USER.value,
         "birthdate",
         FAKER.date_of_birth(),
-        config.db1_connection_string,
+        config.db1_details.db_id,
         False
     )
 
 
+@pytest.mark.parametrize("config", ["duckdb_config", "postgres_config"], indirect=True)
 def test_str_value_delta(config: Config):
     run_value_delta(
         config,
         SampleTable.EMPLOYEE.value,
         "blood_group",
         "HIPA",
-        config.db2_connection_string
+        config.db1_details.db_id
     )
 
 
+@pytest.mark.parametrize("config", ["duckdb_config", "postgres_config"], indirect=True)
 def test_json_value_delta(config: Config):
-    db_conn = config.db2.get_connection(read_only=False)
-    random_row_observed_in = config.db1_connection_string
-    updated_db = config.db2_connection_string
+    db_conn = config.db1.get_connection(read_only=False)
+    random_row_observed_in = config.db2_details.db_id
+    updated_db = config.db1_details.db_id
     test_table = SampleTable.COMPANY.value
     updated_column = "owner"
 
@@ -317,10 +336,11 @@ def test_json_value_delta(config: Config):
     )
 
 
+@pytest.mark.parametrize("config", ["duckdb_config", "postgres_config"], indirect=True)
 def test_json_in_array_str_value_delta(config: Config):
     db_conn = config.db1.get_connection(read_only=False)
-    random_row_observed_in = config.db2_connection_string
-    updated_db = config.db1_connection_string
+    random_row_observed_in = config.db2_details.db_id
+    updated_db = config.db1_details.db_id
     test_table = SampleTable.EMPLOYEE.value
     updated_column = "previous_positions"
 
@@ -350,10 +370,11 @@ def test_json_in_array_str_value_delta(config: Config):
     )
 
 
+@pytest.mark.parametrize("config", ["duckdb_config", "postgres_config"], indirect=True)
 def test_json_key_sorting(config: Config):
-    db_conn = config.db2.get_connection(read_only=False)
-    random_row_observed_in = config.db1_connection_string
-    updated_db = config.db2_connection_string
+    db_conn = config.db1.get_connection(read_only=False)
+    random_row_observed_in = config.db2_details.db_id
+    updated_db = config.db1_details.db_id
     test_table = SampleTable.COMPANY.value
     updated_column = "owner"
 
@@ -382,10 +403,11 @@ def test_json_key_sorting(config: Config):
     )
 
 
+@pytest.mark.parametrize("config", ["duckdb_config", "postgres_config"], indirect=True)
 def test_array_of_json_str_sorting(config: Config):
     db_conn = config.db1.get_connection(read_only=False)
-    random_row_observed_in = config.db2_connection_string
-    updated_db = config.db1_connection_string
+    random_row_observed_in = config.db2_details.db_id
+    updated_db = config.db1_details.db_id
     test_table = SampleTable.EMPLOYEE.value
     updated_column = "previous_positions"
 

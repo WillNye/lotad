@@ -1,3 +1,4 @@
+import json
 from random import randint
 
 import duckdb
@@ -5,9 +6,10 @@ import duckdb
 
 def run_query(
     db_conn: duckdb.DuckDBPyConnection,
-    query: str
+    query: str,
+    **query_parameters,
 ) -> list[dict]:
-    q = db_conn.execute(query)
+    q = db_conn.execute(query, query_parameters or None)
 
     rows = q.fetchall()
     assert q.description
@@ -16,6 +18,13 @@ def run_query(
     return [
         dict(zip(column_names, row))
         for row in rows
+    ]
+
+
+def normalize_results(results: list[dict]) -> list[dict]:
+    return [
+        {k: v if isinstance(v, dict) else str(v) for k, v in json.loads(r["row"]).items()}
+        for r in results
     ]
 
 
@@ -29,7 +38,7 @@ def get_random_row_from_table(
     row_count = count_result[0]['ROW_COUNT']
     results = run_query(
         db_conn,
-        f"SELECT * FROM {table} WHERE id = {randint(1, row_count)}"
+        f"SELECT to_json(t) as row FROM {table} t WHERE id = {randint(1, row_count)}"
     )
-    return results[0]
+    return normalize_results(results)[0]
 

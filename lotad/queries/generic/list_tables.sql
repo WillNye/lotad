@@ -1,0 +1,1 @@
+SELECT table_name FROM db.information_schema.tables WHERE table_schema = $table_schema
