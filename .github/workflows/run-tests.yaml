@@ -14,9 +14,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Docker Compose
-        uses: docker/setup-docker-compose@v2
-
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
