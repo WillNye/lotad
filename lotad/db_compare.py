@@ -79,18 +79,37 @@ class DatabaseComparator:
         # Column type mismatches
         for col in set(schema1.keys()) & set(schema2.keys()):
             if schema1[col] != schema2[col]:
+                db_1_generic_type = self.config.db1.get_generic_column_type(
+                    schema1[col],
+                    self.config.db2.db_type
+                )
+                db2_generic_type = self.config.db2.get_generic_column_type(
+                    schema2[col],
+                    self.config.db1.db_type
+                )
+
                 if (
-                    self.config.db1.get_generic_column_type(schema1[col])
-                    != self.config.db2.get_generic_column_type(schema2[col])
+                    db_1_generic_type
+                    != db2_generic_type
                 ):
+                    if schema1[col] == db_1_generic_type:
+                        db1_column_type = schema1[col]
+                    else:
+                        db1_column_type = f"{schema1[col]} ({db_1_generic_type})"
+
+                    if schema2[col] == db2_generic_type:
+                        db2_column_type = schema2[col]
+                    else:
+                        db2_column_type = f"{schema2[col]} ({db2_generic_type})"
+
                     response.append(
                         TableSchemaDrift(
                             table_name=table_name,
                             db1=self.db1_id,
                             db2=self.db2_id,
                             column_name=col,
-                            db1_column_type=schema1[col],
-                            db2_column_type=schema2[col],
+                            db1_column_type=db1_column_type,
+                            db2_column_type=db2_column_type,
                         )
                     )
 
