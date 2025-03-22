@@ -1,6 +1,6 @@
 [project]
 name = "lotad"
-version = "0.2.0"
+version = "0.2.1"
 description = "Lotad helps you identify schema changes, data differences, and structural modifications between database versions."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -29,7 +29,8 @@ lotad = "lotad.cli:cli"
 [tool.setuptools.package-data]
 "lotad" = [
     "queries/**/*.sql",
-    "reports/*.j2"
+    "reports/*.j2",
+    "data/*.json"
 ]
 
 [build-system]
