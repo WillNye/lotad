@@ -1,4 +1,5 @@
 import functools
+import json
 import os
 import tempfile
 import urllib.parse
@@ -12,6 +13,8 @@ from jinja2 import Template
 
 from lotad.utils import get_row_hash
 from lotad.logger import logger
+
+_DATA_DIR = os.path.join(os.path.dirname(__file__), 'data')
 
 
 def run_duckdb_query(
@@ -30,9 +33,21 @@ def run_duckdb_query(
     ]
 
 
+@functools.cache
+def get_data_type_map(source_db_type: str, target_db_type: str) -> dict[str, str]:
+    with open(
+        os.path.join(
+            _DATA_DIR,
+            f"{source_db_type}_to_{target_db_type}_data_types.json"
+        )
+    ) as f:
+        return json.load(f)
+
+
 class DatabaseType(Enum):
     DUCKDB = 'duckdb'
     POSTGRESQL = 'postgres'
+    SQLITE = 'sqlite'
 
 
 @dataclass
@@ -90,6 +105,10 @@ class LotadConnectionInterface:
         return self.db_details.db_id
 
     @property
+    def db_type(self):
+        return self._db_type
+
+    @property
     def connection_string(self) -> str:
         raise NotImplementedError
 
@@ -142,6 +161,19 @@ class LotadConnectionInterface:
             ).fetchall()
         )
 
+    def select_from_table_query(
+        self,
+        table_name: str,
+        columns: list[str],
+        db_name: str,
+    ):
+        query_template = self.get_query_template('default_select_from_table')
+        return query_template.render(
+            table_name=table_name,
+            columns=columns,
+            db_name=db_name,
+        )
+
     @staticmethod
     def parse_db_response(db_response) -> list[dict]:
         rows = db_response.fetchall()
@@ -149,8 +181,11 @@ class LotadConnectionInterface:
         column_names = [desc[0] for desc in db_response.description]
         return [dict(zip(column_names, row)) for row in rows]
 
-    @staticmethod
-    def get_generic_column_type(column_type: str) -> str:
+    def get_generic_column_type(
+        self,
+        column_type: str,
+        comparison_db_type: DatabaseType,
+    ) -> str:
         """Databases can have different types or names to represent the same column.
         For those situations, the DB connection interface can provide a custom value
         that will be compatible across all databases.
@@ -165,9 +200,15 @@ class LotadConnectionInterface:
         Unresolved character type -> VARCHAR
 
         :param column_type:
+        :param comparison_db_type:
         :return:
         """
-        raise NotImplementedError
+        if comparison_db_type == self._db_type:
+            return column_type
+
+        return get_data_type_map(
+            self._db_type.value, comparison_db_type.value
+        ).get(column_type, column_type)
 
     @classmethod
     def create(cls, db_details: DatabaseDetails) -> "LotadConnectionInterface":
@@ -175,6 +216,8 @@ class LotadConnectionInterface:
             return DuckDbConnectionInterface(db_details)
         elif db_details.database_type == DatabaseType.POSTGRESQL:
             return PostgresConnectionInterface(db_details)
+        elif db_details.database_type == DatabaseType.SQLITE:
+            return SqliteConnectionInterface(db_details)
         else:
             raise NotImplementedError
 
@@ -184,13 +227,8 @@ class LotadConnectionInterface:
         if not query_name.endswith('.sql'):
             query_name += '.sql'
 
-        if self._db_type == DatabaseType.DUCKDB:
-            subdir = "duckdb"
-        else:
-            subdir = "generic"
-
         with open(
-            os.path.join(self._queries_dir, subdir, query_name)
+            os.path.join(self._queries_dir, self._db_type.value, query_name)
         ) as f:
             return Template(f.read())
 
@@ -218,14 +256,27 @@ class DuckDbConnectionInterface(LotadConnectionInterface):
         else:
             return ""
 
-    @staticmethod
-    def get_generic_column_type(column_type: str) -> str:
-        if column_type.startswith("STRUCT") or column_type.startswith("MAP"):
-            return "JSON"
-        elif column_type.startswith("LIST") or column_type.endswith("[]"):
-            return "ARRAY"
+    def get_generic_column_type(
+        self,
+        column_type: str,
+        comparison_db_type: DatabaseType,
+    ) -> str:
+        if comparison_db_type == self._db_type:
+            return column_type
+        elif comparison_db_type == DatabaseType.POSTGRESQL:
+            if column_type.startswith("STRUCT"):
+                return "JSON"
+            elif column_type.startswith("LIST") or column_type.endswith("[]"):
+                return "ARRAY"
+        elif comparison_db_type == DatabaseType.SQLITE:
+            if column_type.startswith("STRUCT"):
+                return "VARCHAR"
+            elif column_type.startswith("LIST") or column_type.endswith("[]"):
+                return "VARCHAR"
 
-        return column_type
+        return get_data_type_map(
+            self._db_type.value, comparison_db_type.value
+        ).get(column_type, column_type)
 
 
 class PostgresConnectionInterface(LotadConnectionInterface):
@@ -244,8 +295,33 @@ class PostgresConnectionInterface(LotadConnectionInterface):
 
         return conn_str
 
-    @staticmethod
-    def get_generic_column_type(column_type: str) -> str:
-        if column_type == "CHARACTER VARYING":
-            return "VARCHAR"
+
+class SqliteConnectionInterface(LotadConnectionInterface):
+    _db_type: DatabaseType = DatabaseType.SQLITE
+    _table_schema = None
+
+    @property
+    def connection_string(self) -> str:
+        return self.db_details.path
+
+    def get_generic_column_type(
+        self,
+        column_type: str,
+        comparison_db_type: DatabaseType,
+    ) -> str:
         return column_type
+
+    def list_tables(self, db_conn: duckdb.DuckDBPyConnection) -> list[str]:
+        """Get list of all tables in a database."""
+        return sorted(
+            db_conn.execute(
+                self.get_query_template('list_tables').render()
+            ).fetchall()
+        )
+
+    def get_schema(self, db_conn: duckdb.DuckDBPyConnection, table_name: str, ignore_dates: bool) -> dict:
+        """Get schema information for a table."""
+        query = self.get_query_template('get_schema')
+        query = query.render(table_name=table_name, ignore_dates=ignore_dates)
+        columns = run_duckdb_query(db_conn, query)
+        return {col["column_name"]: col["data_type"] for col in columns}

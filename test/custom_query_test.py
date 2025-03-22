@@ -22,7 +22,7 @@ def _update_random_row(db_config: LotadConnectionInterface, table: str, column: 
     db_conn.close()
 
 
-@pytest.mark.parametrize("config", ["duckdb_config", "postgres_config"], indirect=True)
+@pytest.mark.parametrize("config", ["duckdb_config", "postgres_config", "sqlite_config"], indirect=True)
 def test_basic_select_query(config: Config):
     # This is more of a basic end-to-end test for the custom query feature
     # More focused custom query tests are below
@@ -53,7 +53,7 @@ def test_basic_select_query(config: Config):
     assert column_names == sorted(['id', 'name', 'hashed_row', 'observed_in'])
 
 
-@pytest.mark.parametrize("config", ["duckdb_config", "postgres_config"], indirect=True)
+@pytest.mark.parametrize("config", ["duckdb_config", "postgres_config", "sqlite_config"], indirect=True)
 def test_join_query(config: Config):
     # Configure a custom query joining USER and EMPLOYEE tables
     user_table = SampleTable.USER.value
@@ -84,7 +84,7 @@ def test_join_query(config: Config):
     assert table_query == expected_query
 
 
-@pytest.mark.parametrize("config", ["duckdb_config", "postgres_config"], indirect=True)
+@pytest.mark.parametrize("config", ["duckdb_config", "postgres_config", "sqlite_config"], indirect=True)
 def test_subquery(config: Config):
     # Configure a custom query with a subquery for the COMPANY table
     company_table = SampleTable.COMPANY.value
@@ -119,7 +119,7 @@ def test_subquery(config: Config):
     assert table_query == expected_query
 
 
-@pytest.mark.parametrize("config", ["duckdb_config", "postgres_config"], indirect=True)
+@pytest.mark.parametrize("config", ["duckdb_config", "postgres_config", "sqlite_config"], indirect=True)
 def test_query_with_where(config: Config):
     # Configure a custom query for the USER table
     test_table = SampleTable.USER.value

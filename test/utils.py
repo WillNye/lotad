@@ -22,10 +22,21 @@ def run_query(
 
 
 def normalize_results(results: list[dict]) -> list[dict]:
-    return [
-        {k: v if isinstance(v, dict) else str(v) for k, v in json.loads(r["row"]).items()}
-        for r in results
-    ]
+    response = []
+    for r in results:
+        row = dict()
+        for k, v in json.loads(r["row"]).items():
+            if isinstance(v, dict):
+                row[k] = v
+            elif isinstance(v, str):
+                try:
+                    row[k] = json.dumps(json.loads(v))
+                except Exception:
+                    row[k] = v
+            else:
+                row[k] = str(v)
+        response.append(row)
+    return response
 
 
 def get_random_row_from_table(

@@ -28,6 +28,10 @@ pip install lotad
 ### How to use
 ```bash
 # Create a config file to quickly re-run the same diff check on 2 databases
+lotad setup
+
+# Or pass in the config to make changes via the wizard
+# Alternatively, you can just alter the config directly
 lotad setup --config lotad_config.yaml
 
 # To perform the diff check

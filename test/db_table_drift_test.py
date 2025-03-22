@@ -8,7 +8,7 @@ from test import SampleTable
 from test.utils import run_query
 
 
-@pytest.mark.parametrize("config", ["duckdb_config", "postgres_config"], indirect=True)
+@pytest.mark.parametrize("config", ["duckdb_config", "postgres_config", "sqlite_config"], indirect=True)
 def test_missing_table(config: Config):
     db_conn = config.db1.get_connection(read_only=False)
     test_table = SampleTable.EMPLOYEE.value

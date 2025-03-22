@@ -43,8 +43,12 @@ class ConfigWizard:
             table_name=table_name,
             columns=[]
         )
-        tmp_path = f"/tmp/lotad_config_{table_name}.db"
-        tmp_db_interface: LotadConnectionInterface = LotadConnectionInterface.create(tmp_path)
+        tmp_db_interface: LotadConnectionInterface = LotadConnectionInterface.create(
+            DatabaseDetails(
+                database_type=DatabaseType.DUCKDB,
+                path=f"/tmp/lotad_config_{table_name}.db"
+            )
+        )
         tmp_db = tmp_db_interface.get_connection(read_only=False)
 
         db1 = self.config.db1.get_connection(read_only=True)
@@ -358,6 +362,13 @@ class ConfigWizard:
                 password=password,
                 passfile=passfile,
                 database=database,
+            )
+        elif db_type == DatabaseType.SQLITE.value:
+            return DatabaseDetails(
+                database_type=DatabaseType.SQLITE,
+                path=questionary.text(
+                    message="What is the SQLite file path?",
+                ).ask(),
             )
         else:
             raise ValueError("Invalid database type")
